@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block title %}Settings{% endblock %}
+
+{% block content %}
+<div class="grid md:grid-cols-2 gap-5">
+  <div class="card-soft rounded-xl p-4 space-y-3">
+    <h1 class="font-display text-2xl font-semibold">API keys</h1>
+    <p class="text-sm text-slate-600">Free keys only. Leave blank to use offline RapidFuzz search.</p>
+    <label class="block text-sm font-medium">Shop name</label>
+    <input id="shop-name" type="text" class="w-full rounded-lg border px-3 py-2" />
+    <label class="block text-sm font-medium">Groq API key</label>
+    <input id="groq-key" type="password" placeholder="optional" class="w-full rounded-lg border px-3 py-2" />
+    <p id="groq-hint" class="text-xs text-slate-500"></p>
+    <label class="block text-sm font-medium">Gemini API key</label>
+    <input id="gemini-key" type="password" placeholder="optional" class="w-full rounded-lg border px-3 py-2" />
+    <p id="gemini-hint" class="text-xs text-slate-500"></p>
+    <button id="save-keys" type="button" class="px-4 py-2 rounded-lg bg-slate-900 text-white">Save</button>
+    <p id="save-msg" class="text-sm text-accent hidden">Saved.</p>
+  </div>
+
+  <div class="card-soft rounded-xl p-4 space-y-3">
+    <h2 class="font-semibold text-lg">Excel import</h2>
+    <p class="text-sm text-slate-600">Source: <code>data/C_P_LIST.xlsx</code></p>
+    <div id="import-info" class="text-sm space-y-1"></div>
+    <button id="reimport" type="button" class="px-4 py-2 rounded-lg bg-accent text-white">Re-import now</button>
+    <pre id="import-result" class="text-xs bg-slate-900 text-slate-100 rounded-lg p-3 overflow-auto hidden"></pre>
+  </div>
+</div>
+<script>
+async function loadSettings() {
+  const res = await fetch('/api/status');
+  const data = await res.json();
+  document.getElementById('shop-name').value = data.shop_name || '';
+  document.getElementById('groq-hint').textContent = data.keys.groq
+    ? ('Configured: ' + data.keys.groq_masked + ' · model ' + data.models.groq)
+    : 'Not set — will skip Groq';
+  document.getElementById('gemini-hint').textContent = data.keys.gemini
+    ? ('Configured: ' + data.keys.gemini_masked + ' · model ' + data.models.gemini)
+    : 'Not set — will skip Gemini';
+  const li = data.last_import;
+  document.getElementById('import-info').innerHTML = `
+    <div>Items in DB: <strong>${data.item_count}</strong></div>
+    <div>Last import: ${li ? li.imported_at : '—'}</div>
+    <div>File modified: ${li ? li.file_modified : '—'}</div>
+    <div>Needs re-import: ${data.needs_reimport ? 'yes' : 'no'}</div>
+  `;
+}
+document.getElementById('save-keys').addEventListener('click', async () => {
+  const body = {
+    shop_name: document.getElementById('shop-name').value,
+  };
+  const g = document.getElementById('groq-key').value.trim();
+  const m = document.getElementById('gemini-key').value.trim();
+  if (g) body.groq_api_key = g;
+  if (m) body.gemini_api_key = m;
+  await fetch('/api/settings/keys', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  document.getElementById('save-msg').classList.remove('hidden');
+  document.getElementById('groq-key').value = '';
+  document.getElementById('gemini-key').value = '';
+  await loadSettings();
+  if (window.refreshModeBanner) refreshModeBanner();
+});
+document.getElementById('reimport').addEventListener('click', async () => {
+  const res = await fetch('/api/import?force=true', { method: 'POST' });
+  const data = await res.json();
+  const el = document.getElementById('import-result');
+  el.classList.remove('hidden');
+  el.textContent = JSON.stringify(data, null, 2);
+  await loadSettings();
+  if (window.refreshModeBanner) refreshModeBanner();
+});
+loadSettings();
+</script>
+{% endblock %}

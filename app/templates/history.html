@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Bill History{% endblock %}
+
+{% block content %}
+<div class="card-soft rounded-xl p-4">
+  <h1 class="font-display text-2xl font-semibold mb-3">Past bills</h1>
+  <div class="overflow-auto">
+    <table class="min-w-full text-sm">
+      <thead class="bg-slate-900 text-white">
+        <tr>
+          <th class="text-left px-2 py-2">Bill #</th>
+          <th class="text-left px-2 py-2">Date</th>
+          <th class="text-left px-2 py-2">Customer</th>
+          <th class="text-right px-2 py-2">Total (PKR)</th>
+          <th class="text-right px-2 py-2">PDF</th>
+        </tr>
+      </thead>
+      <tbody id="hist-body"></tbody>
+    </table>
+  </div>
+</div>
+<script>
+async function loadHistory() {
+  const res = await fetch('/api/history');
+  const data = await res.json();
+  document.getElementById('hist-body').innerHTML = (data.bills || []).map(b => `
+    <tr class="border-b border-slate-100">
+      <td class="px-2 py-2">#${b.id}</td>
+      <td class="px-2 py-2">${b.created_at || ''}</td>
+      <td class="px-2 py-2">${b.customer || '—'}</td>
+      <td class="px-2 py-2 text-right font-medium">${Number(b.total || 0).toFixed(2)}</td>
+      <td class="px-2 py-2 text-right">
+        <a class="text-accent underline" href="/api/bill/${b.id}/pdf" target="_blank">Download</a>
+      </td>
+    </tr>
+  `).join('') || '<tr><td colspan="5" class="px-2 py-6 text-center text-slate-500">No bills yet</td></tr>';
+}
+loadHistory();
+</script>
+{% endblock %}

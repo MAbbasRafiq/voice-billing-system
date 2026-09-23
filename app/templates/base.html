@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{% block title %}Billing System{% endblock %}</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            ink: '#0f172a',
+            panel: '#f8fafc',
+            accent: '#0f766e',
+            accent2: '#b45309',
+          },
+          fontFamily: {
+            display: ['"Segoe UI"', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+            body: ['"Segoe UI"', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    body {
+      background:
+        radial-gradient(1200px 500px at 10% -10%, rgba(15,118,110,0.12), transparent 55%),
+        radial-gradient(900px 400px at 100% 0%, rgba(180,83,9,0.10), transparent 50%),
+        #f1f5f9;
+      min-height: 100vh;
+    }
+    .card-soft {
+      background: rgba(255,255,255,0.88);
+      border: 1px solid rgba(15,23,42,0.08);
+      box-shadow: 0 10px 30px rgba(15,23,42,0.06);
+    }
+    .foc-row { background: #dcfce7; color: #166534; }
+    .match-card.selected { outline: 2px solid #0f766e; background: #f0fdfa; }
+    #mode-banner.fuzzy { background: #fff7ed; color: #9a3412; border-color: #fdba74; }
+    #mode-banner.groq { background: #ecfdf5; color: #065f46; border-color: #6ee7b7; }
+    #mode-banner.gemini { background: #eff6ff; color: #1e40af; border-color: #93c5fd; }
+  </style>
+</head>
+<body class="font-body text-ink">
+  <header class="border-b border-slate-200/80 bg-white/70 backdrop-blur sticky top-0 z-40">
+    <div class="max-w-7xl mx-auto px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+      <a href="/" class="font-display text-xl font-semibold tracking-tight">
+        Spare Parts <span class="text-accent">Billing</span>
+      </a>
+      <nav class="flex flex-wrap gap-1 text-sm">
+        <a class="px-3 py-1.5 rounded-md hover:bg-slate-100 {% if active|default('') == 'billing' %}bg-slate-900 text-white hover:bg-slate-900{% endif %}" href="/">Billing</a>
+        <a class="px-3 py-1.5 rounded-md hover:bg-slate-100 {% if active|default('') == 'catalog' %}bg-slate-900 text-white hover:bg-slate-900{% endif %}" href="/catalog">Catalog</a>
+        <a class="px-3 py-1.5 rounded-md hover:bg-slate-100 {% if active|default('') == 'history' %}bg-slate-900 text-white hover:bg-slate-900{% endif %}" href="/history">History</a>
+        <a class="px-3 py-1.5 rounded-md hover:bg-slate-100 {% if active|default('') == 'settings' %}bg-slate-900 text-white hover:bg-slate-900{% endif %}" href="/settings">Settings</a>
+      </nav>
+    </div>
+  </header>
+
+  <div id="mode-banner" class="max-w-7xl mx-auto px-4 mt-3 text-sm border rounded-md px-3 py-2 fuzzy">
+    Checking AI mode…
+  </div>
+
+  <main class="max-w-7xl mx-auto px-4 py-5">
+    {% block content %}{% endblock %}
+  </main>
+
+  <script>
+    async function refreshModeBanner() {
+      try {
+        const res = await fetch('/api/status');
+        const data = await res.json();
+        const el = document.getElementById('mode-banner');
+        el.className = 'max-w-7xl mx-auto px-4 mt-3 text-sm border rounded-md px-3 py-2 ' + (data.mode || 'fuzzy');
+        el.textContent = data.mode_label + ' · ' + (data.item_count || 0) + ' items in catalog';
+        window.__billingStatus = data;
+      } catch (e) {
+        const el = document.getElementById('mode-banner');
+        el.textContent = 'Status unavailable';
+      }
+    }
+    refreshModeBanner();
+  </script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

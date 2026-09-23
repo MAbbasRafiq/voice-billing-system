@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}Catalog{% endblock %}
+
+{% block content %}
+<div class="card-soft rounded-xl p-4">
+  <h1 class="font-display text-2xl font-semibold mb-3">Item catalog</h1>
+  <div class="flex flex-wrap gap-2 mb-4">
+    <input id="cat-q" type="search" placeholder="Search…" class="rounded-lg border px-3 py-2 flex-1 min-w-[200px]" />
+    <select id="cat-category" class="rounded-lg border px-3 py-2">
+      <option value="">All categories</option>
+    </select>
+    <button id="cat-go" type="button" class="px-4 py-2 rounded-lg bg-slate-900 text-white">Filter</button>
+  </div>
+  <div class="overflow-auto">
+    <table class="min-w-full text-sm">
+      <thead class="bg-slate-900 text-white">
+        <tr>
+          <th class="text-left px-2 py-2">Code</th>
+          <th class="text-left px-2 py-2">Model</th>
+          <th class="text-left px-2 py-2">Name</th>
+          <th class="text-left px-2 py-2">Category</th>
+          <th class="text-right px-2 py-2">CP</th>
+          <th class="text-right px-2 py-2">FOC</th>
+        </tr>
+      </thead>
+      <tbody id="cat-body"></tbody>
+    </table>
+  </div>
+</div>
+<script>
+async function loadCatalog() {
+  const q = document.getElementById('cat-q').value.trim();
+  const category = document.getElementById('cat-category').value;
+  const params = new URLSearchParams({ limit: '500' });
+  if (q) params.set('q', q);
+  if (category) params.set('category', category);
+  const res = await fetch('/api/catalog?' + params.toString());
+  const data = await res.json();
+  const sel = document.getElementById('cat-category');
+  if (sel.options.length <= 1) {
+    (data.categories || []).forEach(c => {
+      const opt = document.createElement('option');
+      opt.value = c; opt.textContent = c;
+      sel.appendChild(opt);
+    });
+  }
+  const body = document.getElementById('cat-body');
+  body.innerHTML = (data.items || []).map(it => `
+    <tr class="border-b border-slate-100 hover:bg-white/70">
+      <td class="px-2 py-1.5 font-mono text-xs">${it.item_code || ''}</td>
+      <td class="px-2 py-1.5">${it.model || ''}</td>
+      <td class="px-2 py-1.5">${it.name || ''}</td>
+      <td class="px-2 py-1.5 text-slate-500">${it.category || ''}</td>
+      <td class="px-2 py-1.5 text-right">${Number(it.cp).toFixed(2)}</td>
+      <td class="px-2 py-1.5 text-right">${it.foc_qty ? (it.foc_qty + '→' + (it.foc_units||0)) : '—'}</td>
+    </tr>
+  `).join('');
+}
+document.getElementById('cat-go').addEventListener('click', loadCatalog);
+document.getElementById('cat-q').addEventListener('keydown', e => { if (e.key === 'Enter') loadCatalog(); });
+loadCatalog();
+</script>
+{% endblock %}
