@@ -50,10 +50,6 @@ source venv/bin/activate
 
 # 3. Dependencies
 pip install -r requirements.txt
-
-# 4. Environment
-copy .env.example .env          # Windows
-# cp .env.example .env         # macOS / Linux
 ```
 
 Edit `.env` (keys are optional — omit them to use offline fuzzy mode):
