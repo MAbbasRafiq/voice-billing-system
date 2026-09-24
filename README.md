@@ -36,7 +36,7 @@ Local voice-driven billing app for a motorcycle spare-parts shop. Speak a full o
 
 ```bash
 # 1. Clone
-git clone https://github.com/<your-username>/voice-billing-system.git
+git clone https://github.com/MAbbasRafiq/voice-billing-system.git
 cd voice-billing-system
 
 # 2. Virtual environment
