@@ -1,10 +1,11 @@
 /**
- * Web Speech API voice input for billing.
+ * Web Speech API — click to toggle mic + English/Urdu language.
  */
 (function () {
   const micBtn = document.getElementById('mic-btn');
   const transcript = document.getElementById('transcript');
   const micState = document.getElementById('mic-state');
+  const langSelect = document.getElementById('speech-lang');
   if (!micBtn || !transcript) return;
 
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -15,55 +16,120 @@
     return;
   }
 
-  const recognition = new SpeechRecognition();
-  recognition.lang = 'en-PK';
-  recognition.interimResults = true;
-  recognition.continuous = false;
-
+  const LANG_KEY = 'billing_speech_lang';
   let listening = false;
+  let recognition = null;
+
+  function currentLang() {
+    if (langSelect) return langSelect.value || 'en-PK';
+    return localStorage.getItem(LANG_KEY) || 'en-PK';
+  }
+
+  function setButtonIdle() {
+    micBtn.textContent = 'Start Listening';
+    micBtn.classList.remove('ring-4', 'ring-red-300', 'bg-red-600');
+    micBtn.classList.add('bg-accent');
+    if (micState) {
+      const lang = currentLang() === 'ur-PK' ? 'Urdu' : 'English';
+      micState.textContent = 'Ready (' + lang + ') — click mic to speak';
+    }
+  }
+
+  function setButtonListening() {
+    micBtn.textContent = 'Stop Listening';
+    micBtn.classList.remove('bg-accent');
+    micBtn.classList.add('ring-4', 'ring-red-300', 'bg-red-600');
+    if (micState) micState.textContent = 'Listening… click again to stop';
+  }
+
+  function createRecognition() {
+    const rec = new SpeechRecognition();
+    rec.lang = currentLang();
+    rec.interimResults = true;
+    rec.continuous = true;
+
+    rec.onresult = (event) => {
+      let text = '';
+      for (let i = 0; i < event.results.length; i++) {
+        text += event.results[i][0].transcript;
+      }
+      transcript.value = text;
+    };
+
+    rec.onerror = (event) => {
+      listening = false;
+      setButtonIdle();
+      if (micState && event.error !== 'aborted') {
+        micState.textContent = 'Mic error — type instead';
+      }
+    };
+
+    rec.onend = () => {
+      // If user still wants listening and browser stopped us, don't auto-restart
+      // (continuous can end on silence). Treat as stopped.
+      if (!listening) {
+        setButtonIdle();
+        const text = transcript.value.trim();
+        if (text && typeof window.parseOrder === 'function') {
+          window.parseOrder(text);
+        }
+        return;
+      }
+      // Browser ended session while we thought we were listening — finalize
+      listening = false;
+      setButtonIdle();
+      const text = transcript.value.trim();
+      if (text && typeof window.parseOrder === 'function') {
+        window.parseOrder(text);
+      }
+    };
+
+    return rec;
+  }
 
   function start() {
     if (listening) return;
     try {
+      recognition = createRecognition();
       recognition.start();
       listening = true;
-      micBtn.classList.add('ring-4', 'ring-red-300');
-      if (micState) micState.textContent = 'Listening…';
-    } catch (_) {}
+      setButtonListening();
+    } catch (_) {
+      listening = false;
+      setButtonIdle();
+    }
   }
 
   function stop() {
+    if (!listening && !recognition) return;
+    listening = false;
     try {
-      recognition.stop();
+      if (recognition) recognition.stop();
     } catch (_) {}
   }
 
-  micBtn.addEventListener('mousedown', (e) => { e.preventDefault(); start(); });
-  micBtn.addEventListener('mouseup', stop);
-  micBtn.addEventListener('mouseleave', () => { if (listening) stop(); });
-  micBtn.addEventListener('touchstart', (e) => { e.preventDefault(); start(); }, { passive: false });
-  micBtn.addEventListener('touchend', (e) => { e.preventDefault(); stop(); });
+  function toggle() {
+    if (listening) stop();
+    else start();
+  }
 
-  recognition.onresult = (event) => {
-    const text = Array.from(event.results)
-      .map((r) => r[0].transcript)
-      .join('');
-    transcript.value = text;
-  };
+  micBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    toggle();
+  });
 
-  recognition.onerror = () => {
-    listening = false;
-    micBtn.classList.remove('ring-4', 'ring-red-300');
-    if (micState) micState.textContent = 'Mic error — type instead';
-  };
+  if (langSelect) {
+    const saved = localStorage.getItem(LANG_KEY);
+    if (saved) langSelect.value = saved;
+    langSelect.addEventListener('change', () => {
+      localStorage.setItem(LANG_KEY, langSelect.value);
+      if (listening) {
+        stop();
+        // brief delay then restart in new language if they were mid-order
+      }
+      setButtonIdle();
+    });
+  }
 
-  recognition.onend = () => {
-    listening = false;
-    micBtn.classList.remove('ring-4', 'ring-red-300');
-    if (micState) micState.textContent = 'Ready';
-    const text = transcript.value.trim();
-    if (text && typeof window.parseOrder === 'function') {
-      window.parseOrder(text);
-    }
-  };
+  setButtonIdle();
 })();

@@ -29,5 +29,20 @@ def catalog(
 
 
 @router.get("/search")
-def search(q: str = Query(..., min_length=1), limit: int = Query(30, ge=1, le=100)):
-    return {"items": rank_catalog(q, limit=limit)}
+def search(
+    q: str = Query(..., min_length=1),
+    limit: int = Query(30, ge=1, le=100),
+    model: Optional[str] = None,
+    models: Optional[str] = None,
+):
+    preferred_models = None
+    if models:
+        preferred_models = [p.strip() for p in models.split(",") if p.strip()]
+    return {
+        "items": rank_catalog(
+            q,
+            limit=limit,
+            preferred_model=model,
+            preferred_models=preferred_models,
+        )
+    }

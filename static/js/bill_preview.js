@@ -99,12 +99,15 @@
         return;
       }
       const data = await res.json();
-      // clear cart after save
-      if (window.__billingCart) {
+      // clear cart + preferred models after save (start fresh next bill)
+      const clearBtn = document.getElementById('clear-cart');
+      if (clearBtn) {
+        clearBtn.click();
+      } else if (window.__billingCart) {
         window.__billingCart.cart = [];
-        // re-render via custom event-ish: reload page cart section
-        const clearBtn = document.getElementById('clear-cart');
-        if (clearBtn) clearBtn.click();
+        if (typeof window.clearPreferredModels === 'function') {
+          window.clearPreferredModels();
+        }
       }
       previewPanel.classList.add('hidden');
       window.open(data.pdf_url, '_blank');

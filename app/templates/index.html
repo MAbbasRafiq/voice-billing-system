@@ -6,13 +6,20 @@
   <section class="lg:col-span-3 space-y-4">
     <div class="card-soft rounded-xl p-4">
       <h1 class="font-display text-2xl font-semibold mb-1">Speak the order</h1>
-      <p class="text-slate-600 text-sm mb-4">Hold the mic, speak the full order, then resolve any ambiguous items.</p>
+      <p class="text-slate-600 text-sm mb-4">Click the mic to start/stop, then resolve any ambiguous items.</p>
 
       <div class="flex flex-wrap items-center gap-3 mb-3">
         <button id="mic-btn" type="button"
           class="select-none px-5 py-3 rounded-lg bg-accent text-white font-medium shadow hover:brightness-110 active:scale-[0.98]">
-          Hold to Speak
+          Start Listening
         </button>
+        <label class="text-sm flex items-center gap-2">
+          <span class="text-slate-600">Language</span>
+          <select id="speech-lang" class="rounded-lg border border-slate-300 px-2 py-2 bg-white text-sm">
+            <option value="en-PK">English (PK)</option>
+            <option value="ur-PK">Urdu (PK)</option>
+          </select>
+        </label>
         <button id="parse-btn" type="button"
           class="px-4 py-3 rounded-lg border border-slate-300 bg-white hover:bg-slate-50">
           Parse Text
@@ -24,16 +31,30 @@
       <textarea id="transcript" rows="3"
         class="w-full rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-accent/40"
         placeholder="e.g. 2 air filter for CD70 and 5 bearing 6203"></textarea>
+
+      <div id="model-lock-bar"
+        class="mt-3 hidden items-center gap-2 flex-wrap rounded-lg border border-teal-200 bg-teal-50 px-3 py-2 text-sm text-teal-900">
+        <span>Preferred models</span>
+        <strong id="model-lock-name" class="font-semibold"></strong>
+        <span class="text-teal-700/80 text-xs">— listed first when available (others still shown)</span>
+        <button id="model-lock-clear" type="button"
+          class="ml-auto text-xs px-2 py-1 rounded border border-teal-300 bg-white hover:bg-teal-100">
+          Clear
+        </button>
+      </div>
     </div>
 
     <div id="disambiguation" class="card-soft rounded-xl p-4 hidden">
-      <div class="flex items-center justify-between gap-2 mb-3">
+      <div class="flex flex-wrap items-center justify-between gap-2 mb-2">
         <h2 class="font-semibold text-lg">Resolve ambiguous items</h2>
         <button id="confirm-resolved" type="button"
           class="px-4 py-2 rounded-lg bg-slate-900 text-white text-sm disabled:opacity-40" disabled>
           Confirm selected
         </button>
       </div>
+      <p class="text-xs text-slate-500 mb-2">
+        Keys: ↑↓ move · Space select · Enter confirm · type to filter model
+      </p>
       <div id="disambiguation-list" class="space-y-4"></div>
     </div>
 

@@ -38,6 +38,25 @@
     }
     .foc-row { background: #dcfce7; color: #166534; }
     .match-card.selected { outline: 2px solid #0f766e; background: #f0fdfa; }
+    .match-card.focused { box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.35); }
+    .qty-chip {
+      font-size: 0.7rem;
+      padding: 0.15rem 0.4rem;
+      border: 1px solid #cbd5e1;
+      border-radius: 0.35rem;
+      background: #fff;
+      line-height: 1.2;
+    }
+    .qty-chip:hover { background: #f1f5f9; }
+    .model-chip {
+      font-size: 0.7rem;
+      padding: 0.2rem 0.5rem;
+      border-radius: 999px;
+      border: 1px solid #cbd5e1;
+      background: #fff;
+      cursor: pointer;
+    }
+    .model-chip.active { background: #0f766e; color: #fff; border-color: #0f766e; }
     #mode-banner.fuzzy { background: #fff7ed; color: #9a3412; border-color: #fdba74; }
     #mode-banner.groq { background: #ecfdf5; color: #065f46; border-color: #6ee7b7; }
     #mode-banner.gemini { background: #eff6ff; color: #1e40af; border-color: #93c5fd; }

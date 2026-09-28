@@ -98,7 +98,8 @@ def get_all_items_for_fuzzy() -> list[dict]:
     conn = get_connection()
     try:
         rows = conn.execute(
-            "SELECT id, item_code, model, name, urdu_name, category, cp, foc_qty, foc_units "
+            "SELECT id, item_code, model, name, urdu_name, category, cp, "
+            "foc_qty, foc_units, ctn_qty "
             "FROM items"
         ).fetchall()
         return [_row_to_dict(r) for r in rows]
