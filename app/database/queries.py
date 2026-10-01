@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from typing import Any, Optional
 
 from app.database.connection import get_connection
@@ -94,17 +95,45 @@ def get_item_by_code(item_code: str) -> list[dict]:
         conn.close()
 
 
+_ITEMS_CACHE: Optional[list[dict]] = None
+_ITEMS_VERSION = 0
+_ITEMS_LOCK = threading.Lock()
+
+
+def invalidate_items_cache() -> None:
+    """Call after the items table changes (Excel import)."""
+    global _ITEMS_CACHE, _ITEMS_VERSION
+    with _ITEMS_LOCK:
+        _ITEMS_CACHE = None
+        _ITEMS_VERSION += 1
+
+
+def items_version() -> int:
+    """Bumps whenever the catalog is reloaded; lets callers cache derived indexes."""
+    get_all_items_for_fuzzy()
+    return _ITEMS_VERSION
+
+
 def get_all_items_for_fuzzy() -> list[dict]:
-    conn = get_connection()
-    try:
-        rows = conn.execute(
-            "SELECT id, item_code, model, name, urdu_name, category, cp, "
-            "foc_qty, foc_units, ctn_qty "
-            "FROM items"
-        ).fetchall()
-        return [_row_to_dict(r) for r in rows]
-    finally:
-        conn.close()
+    """Whole catalog, cached in memory (~2.5k rows). Treat the result as read-only."""
+    global _ITEMS_CACHE
+    cached = _ITEMS_CACHE
+    if cached is not None:
+        return cached
+    with _ITEMS_LOCK:
+        if _ITEMS_CACHE is not None:
+            return _ITEMS_CACHE
+        conn = get_connection()
+        try:
+            rows = conn.execute(
+                "SELECT id, item_code, model, name, urdu_name, category, cp, "
+                "foc_qty, foc_units, ctn_qty "
+                "FROM items"
+            ).fetchall()
+            _ITEMS_CACHE = [_row_to_dict(r) for r in rows]
+        finally:
+            conn.close()
+        return _ITEMS_CACHE
 
 
 def catalog_items(
@@ -200,7 +229,8 @@ def get_bill(bill_id: int) -> Optional[dict]:
             return None
         items = conn.execute(
             """
-            SELECT bi.*, i.item_code, i.model, i.name, i.urdu_name, i.category
+            SELECT bi.*, i.item_code, i.model, i.name, i.urdu_name, i.category,
+                   i.cp, i.foc_qty, i.foc_units, i.ctn_qty
             FROM bill_items bi
             LEFT JOIN items i ON i.id = bi.item_id
             WHERE bi.bill_id = ?
@@ -222,5 +252,68 @@ def list_bills(limit: int = 100) -> list[dict]:
             "SELECT * FROM bills ORDER BY id DESC LIMIT ?", (limit,)
         ).fetchall()
         return [_row_to_dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def list_recent_customers(limit: int = 25) -> list[str]:
+    """Distinct customer names, most recently billed first."""
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            """
+            SELECT customer FROM bills
+            WHERE customer IS NOT NULL AND TRIM(customer) != ''
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (max(limit * 4, 40),),
+        ).fetchall()
+        seen: set[str] = set()
+        out: list[str] = []
+        for r in rows:
+            name = (r["customer"] if hasattr(r, "keys") else r[0]) or ""
+            name = str(name).strip()
+            key = name.lower()
+            if not name or key in seen:
+                continue
+            seen.add(key)
+            out.append(name)
+            if len(out) >= limit:
+                break
+        return out
+    finally:
+        conn.close()
+
+
+def bills_today_summary() -> dict:
+    """Count and total for bills dated today (UTC or local calendar day)."""
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            """
+            SELECT COUNT(*) AS bill_count,
+                   COALESCE(SUM(total), 0) AS total
+            FROM bills
+            WHERE date(created_at) = date('now', 'localtime')
+               OR date(created_at) = date('now')
+            """
+        ).fetchone()
+        d = _row_to_dict(row) if row else {}
+        return {
+            "bill_count": int(d.get("bill_count") or 0),
+            "total": float(d.get("total") or 0),
+        }
+    finally:
+        conn.close()
+
+
+def get_latest_bill_id() -> Optional[int]:
+    conn = get_connection()
+    try:
+        row = conn.execute("SELECT id FROM bills ORDER BY id DESC LIMIT 1").fetchone()
+        if not row:
+            return None
+        return int(row["id"] if hasattr(row, "keys") else row[0])
     finally:
         conn.close()

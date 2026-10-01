@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from typing import Any, Optional
+from typing import Optional
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
@@ -15,9 +15,8 @@ from app.database.queries import (
     get_item_by_id,
     update_bill_pdf,
 )
-from app.services.ai_parser import parse_order
 from app.services.foc_calculator import calculate_foc
-from app.services.fuzzy_search import find_catalog_matches
+from app.services.order_agent import resolve_order
 from app.services.pdf_generator import generate_bill_pdf
 
 router = APIRouter(prefix="/api")
@@ -29,44 +28,8 @@ class OrderRequest(BaseModel):
     preferred_models: Optional[list[str]] = None
 
 
-def _prefer_models(matches: list[dict], preferred: Optional[list[str]]) -> list[dict]:
-    """Sort matches so preferred model variants appear first — never drop others."""
-    if not preferred or not matches:
-        return matches
-    prefs = [p.strip().lower() for p in preferred if p and str(p).strip()]
-    if not prefs:
-        return matches
-
-    def rank(m: dict) -> int:
-        model = (m.get("model") or "").lower()
-        for i, p in enumerate(prefs):
-            if p in model or model in p:
-                return i
-        return len(prefs)
-
-    # Stable-ish: preferred first (by preference order), then the rest in original order
-    preferred_rows = []
-    other_rows = []
-    for m in matches:
-        if rank(m) < len(prefs):
-            preferred_rows.append(m)
-        else:
-            other_rows.append(m)
-    preferred_rows.sort(key=rank)
-    return preferred_rows + other_rows
-
-
 @router.post("/parse-order")
 def parse_order_route(req: OrderRequest):
-    from app.services.fuzzy_search import _has_arabic_script, fuzzy_parse_order
-
-    # Urdu-script orders: LLMs often mistranslate part names (لوٹا→filter).
-    # Use offline fuzzy against English + urdu_name for phrase extraction.
-    if _has_arabic_script(req.text):
-        result = {"results": fuzzy_parse_order(req.text), "mode": "fuzzy"}
-    else:
-        result = parse_order(req.text)
-
     preferred: list[str] = []
     if req.preferred_models:
         preferred.extend([p for p in req.preferred_models if p and str(p).strip()])
@@ -81,24 +44,7 @@ def parse_order_route(req: OrderRequest):
             seen.add(key)
             preferred_unique.append(p)
 
-    enriched = []
-    for item in result["results"]:
-        spoken_model = item.get("model")
-        # Prefer spoken item text; also try spoken phrase for Urdu full utterances
-        query = item.get("item") or item.get("spoken") or ""
-        matches = find_catalog_matches(query, spoken_model)
-        if not matches and item.get("spoken") and item.get("spoken") != query:
-            matches = find_catalog_matches(item.get("spoken") or "", spoken_model)
-        matches = _prefer_models(matches, preferred_unique)
-        confidence = item.get("confidence") or "ambiguous"
-        if len(matches) != 1:
-            confidence = "ambiguous"
-        enriched.append({**item, "confidence": confidence, "matches": matches})
-    return {
-        "mode": result["mode"],
-        "items": enriched,
-        "preferred_models": preferred_unique,
-    }
+    return resolve_order(req.text, preferred_models=preferred_unique)
 
 
 class BillLineIn(BaseModel):

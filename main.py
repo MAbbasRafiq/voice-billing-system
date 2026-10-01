@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import threading
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -35,6 +36,24 @@ def startup():
     (ROOT / "data" / "bills").mkdir(parents=True, exist_ok=True)
     if EXCEL_PATH.exists() and needs_reimport():
         import_all_sheets(force=True)
+    threading.Thread(target=_warm_up, daemon=True).start()
+
+
+def _warm_up() -> None:
+    """Pre-build catalog indexes and open the LLM connection so the first order is fast."""
+    try:
+        from app.services.fuzzy_search import find_catalog_matches, transcript_matches_catalog
+
+        transcript_matches_catalog("warm up")
+        find_catalog_matches("air filter")
+    except Exception:
+        pass
+    try:
+        from app.services.ai_parser import warm_up_llm
+
+        warm_up_llm()
+    except Exception:
+        pass
 
 
 @app.get("/")

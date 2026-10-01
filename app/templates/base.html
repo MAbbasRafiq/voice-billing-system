@@ -59,6 +59,7 @@
     .model-chip.active { background: #0f766e; color: #fff; border-color: #0f766e; }
     #mode-banner.fuzzy { background: #fff7ed; color: #9a3412; border-color: #fdba74; }
     #mode-banner.groq { background: #ecfdf5; color: #065f46; border-color: #6ee7b7; }
+    #mode-banner.local { background: #ecfdf5; color: #065f46; border-color: #6ee7b7; }
     #mode-banner.gemini { background: #eff6ff; color: #1e40af; border-color: #93c5fd; }
   </style>
 </head>
@@ -80,6 +81,9 @@
   <div id="mode-banner" class="max-w-7xl mx-auto px-4 mt-3 text-sm border rounded-md px-3 py-2 fuzzy">
     Checking AI mode…
   </div>
+  <p id="offline-hint" class="hidden max-w-7xl mx-auto px-4 mt-1 text-xs text-amber-800">
+    Offline / fuzzy mode: voice parse uses local matching only. Add an API key in Settings for better Urdu &amp; name picking.
+  </p>
 
   <main class="max-w-7xl mx-auto px-4 py-5">
     {% block content %}{% endblock %}
@@ -94,6 +98,11 @@
         el.className = 'max-w-7xl mx-auto px-4 mt-3 text-sm border rounded-md px-3 py-2 ' + (data.mode || 'fuzzy');
         el.textContent = data.mode_label + ' · ' + (data.item_count || 0) + ' items in catalog';
         window.__billingStatus = data;
+        const hint = document.getElementById('offline-hint');
+        if (hint) {
+          if (data.offline || data.mode === 'fuzzy') hint.classList.remove('hidden');
+          else hint.classList.add('hidden');
+        }
       } catch (e) {
         const el = document.getElementById('mode-banner');
         el.textContent = 'Status unavailable';

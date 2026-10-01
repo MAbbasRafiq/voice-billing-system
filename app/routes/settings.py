@@ -9,7 +9,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from app.database.queries import count_items, get_latest_import
-from app.services.ai_parser import active_ai_mode
+from app.services.ai_parser import active_ai_mode, llm_status
 from app.services.excel_importer import EXCEL_PATH, import_all_sheets, needs_reimport
 
 router = APIRouter(prefix="/api")
@@ -39,10 +39,13 @@ def status():
     return {
         "mode": mode,
         "mode_label": {
-            "groq": "AI mode: Groq",
-            "gemini": "AI mode: Gemini",
-            "fuzzy": "AI unavailable — using manual search mode",
+            "groq": "Online AI: Groq + catalog match",
+            "gemini": "Online AI: Gemini + catalog match",
+            "fuzzy": "Offline mode — no AI keys (RapidFuzz / manual search)",
         }.get(mode, mode),
+        "offline": mode == "fuzzy",
+        # providers currently rate-limited -> seconds until retried (empty = all fine)
+        "ai_cooldown": llm_status(),
         "item_count": count_items(),
         "excel_exists": EXCEL_PATH.exists(),
         "needs_reimport": needs_reimport() if EXCEL_PATH.exists() else False,

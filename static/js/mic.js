@@ -19,6 +19,7 @@
   const LANG_KEY = 'billing_speech_lang';
   let listening = false;
   let recognition = null;
+  let suppressParseOnEnd = false;
 
   function currentLang() {
     if (langSelect) return langSelect.value || 'en-PK';
@@ -40,6 +41,17 @@
     micBtn.classList.remove('bg-accent');
     micBtn.classList.add('ring-4', 'ring-red-300', 'bg-red-600');
     if (micState) micState.textContent = 'Listening… click again to stop';
+  }
+
+  function maybeParseTranscript() {
+    if (suppressParseOnEnd) {
+      suppressParseOnEnd = false;
+      return;
+    }
+    const text = transcript.value.trim();
+    if (text && typeof window.parseOrder === 'function') {
+      window.parseOrder(text);
+    }
   }
 
   function createRecognition() {
@@ -69,19 +81,13 @@
       // (continuous can end on silence). Treat as stopped.
       if (!listening) {
         setButtonIdle();
-        const text = transcript.value.trim();
-        if (text && typeof window.parseOrder === 'function') {
-          window.parseOrder(text);
-        }
+        maybeParseTranscript();
         return;
       }
       // Browser ended session while we thought we were listening — finalize
       listening = false;
       setButtonIdle();
-      const text = transcript.value.trim();
-      if (text && typeof window.parseOrder === 'function') {
-        window.parseOrder(text);
-      }
+      maybeParseTranscript();
     };
 
     return rec;
@@ -100,18 +106,27 @@
     }
   }
 
-  function stop() {
+  function stop(opts) {
+    const quiet = opts && opts.quiet;
     if (!listening && !recognition) return;
+    if (quiet) suppressParseOnEnd = true;
     listening = false;
     try {
       if (recognition) recognition.stop();
     } catch (_) {}
+    recognition = null;
+    if (quiet) setButtonIdle();
   }
 
   function toggle() {
     if (listening) stop();
     else start();
   }
+
+  /** Stop mic without triggering parse (used by New bill). */
+  window.stopMicListening = function stopMicListening() {
+    stop({ quiet: true });
+  };
 
   micBtn.addEventListener('click', (e) => {
     e.preventDefault();
@@ -124,7 +139,7 @@
     langSelect.addEventListener('change', () => {
       localStorage.setItem(LANG_KEY, langSelect.value);
       if (listening) {
-        stop();
+        stop({ quiet: true });
         // brief delay then restart in new language if they were mid-order
       }
       setButtonIdle();

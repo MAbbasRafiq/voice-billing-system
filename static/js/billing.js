@@ -20,12 +20,35 @@
     pending: [], // parsed groups awaiting resolution
     focus: { groupIndex: 0, matchIndex: 0 },
     preferredModels: loadPreferredModels(),
+    cartUndo: [], // snapshots before cart mutations
   };
 
   window.__billingCart = state;
 
   function money(n) {
     return Number(n || 0).toFixed(2);
+  }
+
+  function snapshotCart() {
+    return JSON.parse(JSON.stringify(state.cart));
+  }
+
+  function pushCartUndo() {
+    state.cartUndo.push(snapshotCart());
+    if (state.cartUndo.length > 30) state.cartUndo.shift();
+    updateUndoButton();
+  }
+
+  function updateUndoButton() {
+    const btn = document.getElementById('undo-cart-btn');
+    if (btn) btn.disabled = state.cartUndo.length === 0;
+  }
+
+  function undoCart() {
+    if (!state.cartUndo.length) return;
+    state.cart = state.cartUndo.pop();
+    updateUndoButton();
+    renderCart();
   }
 
   function persistPreferred() {
@@ -126,6 +149,7 @@
     const totalEl = document.getElementById('cart-total');
     const previewBtn = document.getElementById('preview-bill-btn');
     if (!list) return;
+    updateUndoButton();
 
     if (!state.cart.length) {
       list.innerHTML = '<p class="text-slate-500">Cart is empty</p>';
@@ -167,6 +191,7 @@
 
     list.querySelectorAll('[data-remove]').forEach((btn) => {
       btn.addEventListener('click', () => {
+        pushCartUndo();
         state.cart.splice(Number(btn.getAttribute('data-remove')), 1);
         renderCart();
       });
@@ -175,6 +200,7 @@
       input.addEventListener('change', () => {
         const idx = Number(input.getAttribute('data-qty'));
         const v = Math.max(1, parseInt(input.value, 10) || 1);
+        pushCartUndo();
         state.cart[idx].qty = v;
         input.value = v;
         renderCart();
@@ -184,6 +210,7 @@
       btn.addEventListener('click', () => {
         const idx = Number(btn.getAttribute('data-cart-idx'));
         const delta = Number(btn.getAttribute('data-qty-delta'));
+        pushCartUndo();
         state.cart[idx].qty = Math.max(1, state.cart[idx].qty + delta);
         renderCart();
       });
@@ -191,6 +218,7 @@
     list.querySelectorAll('[data-cart-idx][data-qty-set]').forEach((btn) => {
       btn.addEventListener('click', () => {
         const idx = Number(btn.getAttribute('data-cart-idx'));
+        pushCartUndo();
         state.cart[idx].qty = Math.max(1, Number(btn.getAttribute('data-qty-set')));
         renderCart();
       });
@@ -199,13 +227,16 @@
       btn.addEventListener('click', () => {
         const idx = Number(btn.getAttribute('data-cart-idx'));
         const ctn = Number(btn.getAttribute('data-qty-add-ctn'));
+        pushCartUndo();
         state.cart[idx].qty = Math.max(1, state.cart[idx].qty + ctn);
         renderCart();
       });
     });
   }
 
-  function addToCart(item, qty) {
+  function addToCart(item, qty, opts) {
+    const skipUndo = opts && opts.skipUndo;
+    if (!skipUndo) pushCartUndo();
     const id = item.id ?? item.item_id;
     const existing = state.cart.find((c) => c.item_id === id);
     if (existing) {
@@ -217,7 +248,7 @@
         item_code: item.item_code,
         model: item.model,
         name: item.name,
-        cp: item.cp,
+        cp: item.cp != null ? item.cp : item.unit_price,
         foc_qty: item.foc_qty,
         foc_units: item.foc_units,
         ctn_qty: item.ctn_qty || null,
@@ -598,6 +629,19 @@
   }
 
   async function parseOrder(text) {
+    const parseBtn = document.getElementById('parse-btn');
+    const notice = document.getElementById('parse-notice');
+    const prevBtnLabel = parseBtn ? parseBtn.textContent : '';
+    if (parseBtn) {
+      parseBtn.disabled = true;
+      parseBtn.textContent = 'Matching…';
+    }
+    if (notice) {
+      notice.textContent = 'Matching order against catalog…';
+      notice.classList.remove('hidden');
+    }
+
+    try {
     const body = { text };
     if (state.preferredModels.length) {
       body.preferred_models = state.preferredModels.slice();
@@ -613,14 +657,40 @@
       banner.className =
         'max-w-7xl mx-auto px-4 mt-3 text-sm border rounded-md px-3 py-2 ' + data.mode;
       const labels = {
-        groq: 'AI mode: Groq',
-        gemini: 'AI mode: Gemini',
-        fuzzy: 'AI unavailable — using manual search mode',
+        groq: 'Online AI: Groq + catalog',
+        gemini: 'Online AI: Gemini + catalog',
+        local: 'Instant catalog match',
+        fuzzy: 'Offline match (no AI / fallback)',
       };
-      banner.textContent = (labels[data.mode] || data.mode) + ' (last parse)';
+      const sum = data.summary || {};
+      const bits = [];
+      if (sum.auto_added) bits.push(sum.auto_added + ' added');
+      if (sum.needs_review) bits.push(sum.needs_review + ' to review');
+      if (sum.ignored) bits.push(sum.ignored + ' ignored');
+      banner.textContent =
+        (labels[data.mode] || data.mode) +
+        (bits.length ? ' · ' + bits.join(', ') : '') +
+        (data.message ? ' · ' + data.message : '');
+      const hint = document.getElementById('offline-hint');
+      if (hint && data.mode === 'fuzzy') hint.classList.remove('hidden');
     }
 
-    // Replace previous unresolved list so re-parse / accidental Space on Parse won't duplicate panels
+    // Soft notice for noise / empty
+    if (notice) {
+      if (data.message || (data.ignored && data.ignored.length && !(data.items || []).length)) {
+        notice.textContent = data.message || 'Nothing useful found in transcript (noise ignored).';
+        notice.classList.remove('hidden');
+      } else if (data.ignored && data.ignored.length) {
+        notice.textContent =
+          data.ignored.length + ' line(s) ignored (no catalog match).';
+        notice.classList.remove('hidden');
+      } else {
+        notice.textContent = '';
+        notice.classList.add('hidden');
+      }
+    }
+
+    // Replace previous unresolved list
     state.pending = [];
     state.focus = { groupIndex: 0, matchIndex: 0 };
 
@@ -628,21 +698,48 @@
       group.selected = {};
       group.resolved = false;
       group.matches = sortMatchesByPreference(group.matches || []);
-      // Only auto-filter when the spoken order named a model — never hard-filter by preference
       group.modelFilter = group.model || '';
-      if (!needsDisambiguation(group) && group.matches && group.matches.length === 1) {
+      const action = group.action || '';
+
+      if (action === 'ignored') return;
+
+      if (
+        action === 'auto_add' &&
+        group.matches &&
+        group.matches.length === 1
+      ) {
         addToCart(group.matches[0], group.qty || 1);
         group.resolved = true;
-      } else {
-        state.pending.push(group);
+        return;
       }
+
+      // Legacy fallback: single exact match
+      if (
+        !action &&
+        !needsDisambiguation(group) &&
+        group.matches &&
+        group.matches.length === 1
+      ) {
+        addToCart(group.matches[0], group.qty || 1);
+        group.resolved = true;
+        return;
+      }
+
+      state.pending.push(group);
     });
+
     const firstPending = state.pending.find((g) => !g.resolved);
     if (firstPending) {
       state.focus.groupIndex = state.pending.indexOf(firstPending);
       state.focus.matchIndex = 0;
     }
     renderDisambiguation();
+    } finally {
+      if (parseBtn) {
+        parseBtn.disabled = false;
+        parseBtn.textContent = prevBtnLabel || 'Parse Text';
+      }
+    }
   }
 
   window.parseOrder = parseOrder;
@@ -664,11 +761,199 @@
   const clearBtn = document.getElementById('clear-cart');
   if (clearBtn) {
     clearBtn.addEventListener('click', () => {
+      if (state.cart.length) pushCartUndo();
       state.cart = [];
       clearPreferredModels();
       renderCart();
     });
   }
+
+  function resetBillingSession() {
+    if (typeof window.stopMicListening === 'function') {
+      window.stopMicListening();
+    }
+
+    if (state.cart.length) pushCartUndo();
+    state.cart = [];
+    state.pending = [];
+    state.focus = { groupIndex: 0, matchIndex: 0 };
+    clearPreferredModels();
+
+    const transcript = document.getElementById('transcript');
+    if (transcript) transcript.value = '';
+
+    const notice = document.getElementById('parse-notice');
+    if (notice) {
+      notice.classList.add('hidden');
+      notice.textContent = '';
+    }
+
+    const customer = document.getElementById('customer');
+    if (customer) customer.value = '';
+
+    const manualSearch = document.getElementById('manual-search');
+    if (manualSearch) manualSearch.value = '';
+    const manualResults = document.getElementById('manual-results');
+    if (manualResults) manualResults.innerHTML = '';
+
+    const previewPanel = document.getElementById('bill-preview');
+    if (previewPanel) previewPanel.classList.add('hidden');
+    const previewBody = document.getElementById('preview-body');
+    if (previewBody) previewBody.innerHTML = '';
+
+    const confirmBtnEl = document.getElementById('confirm-resolved');
+    if (confirmBtnEl) confirmBtnEl.disabled = true;
+
+    renderDisambiguation();
+    renderCart();
+    renderModelLock();
+
+    if (transcript) transcript.focus();
+  }
+
+  window.resetBillingSession = resetBillingSession;
+
+  async function loadBillIntoCart(billId, opts) {
+    const replace = !opts || opts.replace !== false;
+    const res = await fetch('/api/bills/' + billId);
+    if (!res.ok) {
+      alert('Could not load bill #' + billId);
+      return false;
+    }
+    const bill = await res.json();
+    const items = (bill.items || []).filter((it) => !it.is_foc);
+    if (!items.length) {
+      alert('Bill #' + billId + ' has no paid lines to reuse.');
+      return false;
+    }
+    pushCartUndo();
+    if (replace) state.cart = [];
+    items.forEach((it) => {
+      addToCart(
+        {
+          item_id: it.item_id,
+          id: it.item_id,
+          item_code: it.item_code,
+          model: it.model,
+          name: it.name,
+          cp: it.cp != null ? it.cp : it.unit_price,
+          foc_qty: it.foc_qty,
+          foc_units: it.foc_units,
+          ctn_qty: it.ctn_qty,
+        },
+        Math.max(1, Number(it.qty) || 1),
+        { skipUndo: true }
+      );
+    });
+    const customer = document.getElementById('customer');
+    if (customer && bill.customer) customer.value = bill.customer;
+    const notice = document.getElementById('parse-notice');
+    if (notice) {
+      notice.textContent =
+        'Loaded bill #' + billId + ' (' + items.length + ' line(s)). Adjust qty then preview.';
+      notice.classList.remove('hidden');
+    }
+    return true;
+  }
+
+  async function repeatLastBill() {
+    // Prefer dedicated endpoint; fall back to history list (older servers / route miss)
+    let billId = null;
+    try {
+      const res = await fetch('/api/bills/latest');
+      if (res.status === 200) {
+        const bill = await res.json();
+        billId = bill && bill.id;
+      }
+    } catch (_) {}
+    if (!billId) {
+      try {
+        const res = await fetch('/api/history?limit=1');
+        if (res.status === 200) {
+          const data = await res.json();
+          const first = (data.bills || [])[0];
+          billId = first && first.id;
+        }
+      } catch (_) {}
+    }
+    if (!billId) {
+      alert('No previous bill to repeat.');
+      return;
+    }
+    await loadBillIntoCart(billId, { replace: true });
+  }
+
+  async function loadRecentCustomers() {
+    const list = document.getElementById('recent-customers');
+    if (!list) return;
+    try {
+      const res = await fetch('/api/customers/recent');
+      if (!res.ok) return;
+      const data = await res.json();
+      list.innerHTML = (data.customers || [])
+        .map((c) => `<option value="${String(c).replace(/"/g, '&quot;')}"></option>`)
+        .join('');
+    } catch (_) {}
+  }
+
+  window.loadRecentCustomers = loadRecentCustomers;
+
+  const undoBtn = document.getElementById('undo-cart-btn');
+  if (undoBtn) undoBtn.addEventListener('click', undoCart);
+
+  const repeatBtn = document.getElementById('repeat-last-btn');
+  if (repeatBtn) {
+    repeatBtn.addEventListener('click', () => {
+      if (state.cart.length) {
+        const ok = window.confirm('Replace current cart with the last bill?');
+        if (!ok) return;
+      }
+      repeatLastBill();
+    });
+  }
+
+  const newBillBtn = document.getElementById('new-bill-btn');
+  if (newBillBtn) {
+    newBillBtn.addEventListener('click', () => {
+      const dirty =
+        state.cart.length > 0 ||
+        state.pending.some((g) => !g.resolved) ||
+        (document.getElementById('transcript') || {}).value;
+      if (dirty) {
+        const ok = window.confirm(
+          'Start a new bill? This clears the transcript, cart, and pending items.'
+        );
+        if (!ok) return;
+      }
+      resetBillingSession();
+    });
+  }
+
+  // Ctrl+Z undo when not typing in a field
+  document.addEventListener('keydown', (e) => {
+    if (!(e.ctrlKey || e.metaKey) || (e.key !== 'z' && e.key !== 'Z')) return;
+    const tag = (e.target && e.target.tagName) || '';
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+    if (state.cartUndo.length) {
+      e.preventDefault();
+      undoCart();
+    }
+  });
+
+  loadRecentCustomers();
+
+  // History "Reuse" → /?repeat=ID
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const repeatId = params.get('repeat');
+    if (repeatId) {
+      loadBillIntoCart(Number(repeatId), { replace: true }).then(() => {
+        const url = new URL(window.location.href);
+        url.searchParams.delete('repeat');
+        window.history.replaceState({}, '', url.pathname + url.search);
+      });
+    }
+  } catch (_) {}
 
   // Global keyboard for disambiguation (skip when typing in text fields)
   document.addEventListener(

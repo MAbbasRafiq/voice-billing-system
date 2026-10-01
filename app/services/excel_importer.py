@@ -10,7 +10,13 @@ from typing import Any, Optional
 from openpyxl import load_workbook
 
 from app.database.connection import get_connection
-from app.database.queries import clear_items, count_items, get_latest_import, insert_import_log
+from app.database.queries import (
+    clear_items,
+    count_items,
+    get_latest_import,
+    insert_import_log,
+    invalidate_items_cache,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 EXCEL_PATH = ROOT / "data" / "C_P_LIST.xlsx"
@@ -205,6 +211,7 @@ def import_all_sheets(force: bool = False, path: Path = EXCEL_PATH) -> dict:
         mtime = file_mtime_iso(path)
         insert_import_log(conn, mtime, total)
         conn.commit()
+        invalidate_items_cache()
     finally:
         conn.close()
         wb.close()
