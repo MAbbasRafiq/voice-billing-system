@@ -24,7 +24,11 @@ CASES = [
     ("chain kits", None, ["CHAIN KIT (38X15"], ["CHAIN LOCK"], "phrase"),            # plural
     ("chain lock", None, ["CHAIN LOCK 420"], ["CHAIN KIT"], "phrase"),
     ("چین لوگ", None, ["CHAIN LOCK"], ["CHAIN KIT"], None),                           # Urdu fuzzy ok
-    ("BACK LIGHT COMPLETE", None, ["BACK LIGHT COMPLETE"], ["BACK LIGHT LED", "BACK LIGHT LENS"], "exact"),
+    ("BACK LIGHT COMPLETE", None, ["BACK LIGHT COMPLETE", "BACK LIGHT COMPLETE (2003 MODEL)"], ["BACK LIGHT LED", "BACK LIGHT LENS"], "exact"),
+    ("backlight complete", None, ["BACK LIGHT COMPLETE", "BACK LIGHT COMPLETE (2003 MODEL)"], ["HEAD LIGHT COMPLETE"], "exact"),
+    ("backtack", None, ["BACK TACK"], ["BACK TAKE"], "exact"),
+    ("بیک ٹیک", None, ["BACK TACK"], ["BACK LIGHT COMPLETE", "BACK TAKE"], "exact"),
+    ("5 بیک ٹیک", None, ["BACK TACK"], ["BACK LIGHT COMPLETE", "BACK TAKE"], "exact"),
     ("BACK LIGHT LED", None, ["BACK LIGHT LED"], ["BACK LIGHT COMPLETE", "BACK LIGHT LENS"], "exact"),
     ("back light lens", None, ["BACK LIGHT LENS"], ["BACK LIGHT LED", "BACK LIGHT COMPLETE"], "exact"),
     ("BASKET", None, ["BASKET"], [], "exact"),
@@ -39,6 +43,9 @@ CASES = [
     ("carburator", None, ["CARBURETOR (PZ-18)", "CARBURETOR (PZ-22)"], [], "phrase"),
     ("clach cable", None, ["CLUTCH CABLE"], ["BRAKE CABLE", "METER CABLE"], "exact"),
     ("brak cable front", None, ["BRAKE CABLE FRONT"], ["BRAKE CABLE REAR"], "exact"),
+    ("cdi unit lead", None, ["C.D.I UNIT LEED", "C.D.I UNIT LEED (MB100)"], ["BACK LIGHT LED"], "exact"),
+    ("سی ڈی ای یونٹ لیڈ", None, ["C.D.I UNIT LEED", "C.D.I UNIT LEED (MB100)"], ["BACK LIGHT LED", "HEAD LIGHT LED"], "exact"),
+    ("سی ڈی آئی یونٹ لیڈ", None, ["C.D.I UNIT LEED", "C.D.I UNIT LEED (MB100)"], ["BACK LIGHT LED", "HEAD LIGHT LED"], "exact"),
     ("bearing 6203", None, ["6203"], ["6000"], None),                                  # number token kept
 ]
 

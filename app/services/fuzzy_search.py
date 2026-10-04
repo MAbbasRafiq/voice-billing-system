@@ -42,6 +42,9 @@ PART_WORD_ALIASES = {
     "ایئر": "air",
     "ائیر": "air",
     "بیک": "back",
+    # Whisper/Urdu for catalog BACK TACK (not BACK TAKE / BACK LIGHT)
+    "ٹیک": "tack",
+    "تیک": "tack",
     "لائٹ": "light",
     "لائیٹ": "light",
     "ہیڈ": "head",
@@ -56,12 +59,21 @@ PART_WORD_ALIASES = {
     "باسکٹ": "basket",
     "بسکٹ": "basket",
     "یونٹ": "unit",
+    # Catalog spelling is LEED ("C.D.I UNIT LEED"). Whisper/Urdu often writes لیڈ;
+    # LED itself is the separate phrase "ایل ای ڈی".
+    "لیڈ": "leed",
+    "لیڈز": "leed",
 }
 
 PART_PHRASE_ALIASES = {
     "ایل ای ڈی": "led",
     "سی ڈی آئی": "cdi",
     "سی ڈی آئی یونٹ": "cdi unit",
+    # Whisper often drops the hamza / shortens آئی → ای
+    "سی ڈی ای": "cdi",
+    "سی ڈی ای یونٹ": "cdi unit",
+    "سی ڈی اے": "cdi",
+    "سی ڈی اے یونٹ": "cdi unit",
     "ایئر فلٹر": "air filter",
     "ائیر فلٹر": "air filter",
     "چین کٹ": "chain kit",
@@ -313,10 +325,13 @@ def content_tokens(text: str) -> list[str]:
         # Drop leftover Arabic tokens that didn't map
         if re.search(r"[\u0600-\u06FF]", mapped):
             continue
-        if mapped in QUERY_STOPWORDS or mapped in seen:
-            continue
-        seen.add(mapped)
-        out.append(mapped)
+        for piece in mapped.split():
+            piece = _stem(piece)
+            for expanded in _split_catalog_compound(piece):
+                if expanded in QUERY_STOPWORDS or expanded in seen:
+                    continue
+                seen.add(expanded)
+                out.append(expanded)
     return out
 
 
@@ -736,6 +751,20 @@ def _derived() -> dict:
             name_vocab.update(name_tokens)
             vocab.update(_name_tokens_t(i.get("model") or ""))
         vocab.discard("")
+        compound_options: dict[str, set[tuple[str, ...]]] = {}
+        for name_seq in name_seq_counts:
+            for width in (2, 3):
+                for start in range(len(name_seq) - width + 1):
+                    parts = name_seq[start : start + width]
+                    joined = "".join(parts)
+                    if len(joined) >= 6 and joined not in name_vocab:
+                        compound_options.setdefault(joined, set()).add(parts)
+        # Split only unambiguous compounds found as adjacent catalog-name words.
+        compound_splits = {
+            joined: next(iter(options))
+            for joined, options in compound_options.items()
+            if len(options) == 1
+        }
         _DERIVED = {
             "version": ver,
             "model_seqs": model_seqs,
@@ -751,9 +780,17 @@ def _derived() -> dict:
             "vocab_list": list(vocab),
             "name_vocab": name_vocab,
             "name_vocab_list": list(name_vocab),
+            "compound_splits": compound_splits,
             "choices": None,
         }
     return _DERIVED
+
+
+def _split_catalog_compound(token: str) -> tuple[str, ...]:
+    """Split a joined Whisper token only when the catalog has one clear split."""
+    if not token:
+        return ()
+    return _derived()["compound_splits"].get(token, (token,))
 
 
 def analyze_query(text: str) -> tuple[list[str], int]:
@@ -780,8 +817,9 @@ def analyze_query(text: str) -> tuple[list[str], int]:
             continue
         for piece in mapped.split():
             piece = _stem(piece)
-            if piece and piece not in out:
-                out.append(piece)
+            for expanded in _split_catalog_compound(piece):
+                if expanded and expanded not in out:
+                    out.append(expanded)
     return out, unmapped
 
 
@@ -913,6 +951,34 @@ def _cascade_rank(rows: list[dict], tokens: list[str], tier: str) -> list[dict]:
     return scored
 
 
+def _parenthetical_name_siblings(pool: list[dict], exact_rows: list[dict]) -> list[dict]:
+    """Include catalog rows that are only a parenthetical qualifier on an exact name.
+
+    Example: exact ``C.D.I UNIT LEED`` also keeps ``C.D.I UNIT LEED (MB100)``.
+    Does not pull unrelated products such as ``AIR FILTER FOAM`` for ``AIR FILTER``.
+    """
+    if not exact_rows:
+        return []
+    exact_names = {(r.get("name") or "").strip() for r in exact_rows if r.get("name")}
+    exact_names.discard("")
+    if not exact_names:
+        return []
+    seen = {id(r) for r in exact_rows}
+    siblings: list[dict] = []
+    for row in pool:
+        if id(row) in seen:
+            continue
+        name = (row.get("name") or "").strip()
+        if not name:
+            continue
+        for base in exact_names:
+            if name.startswith(base + " (") or name.startswith(base + "("):
+                siblings.append(row)
+                seen.add(id(row))
+                break
+    return siblings
+
+
 def exact_first_matches(
     items: list[dict],
     query: str,
@@ -951,7 +1017,9 @@ def exact_first_matches(
         named = [(i, _name_tokens_t(i.get("name") or "")) for i in pool]
         exact = [i for i, nt in named if nt == want]
         if exact:
-            return _cascade_rank(exact, tokens, TIER_EXACT)
+            # Keep parenthetical siblings so the shop can choose (LEED vs LEED (MB100)).
+            family = exact + _parenthetical_name_siblings(pool, exact)
+            return _cascade_rank(family, tokens, TIER_EXACT)
 
         # 3) Request is a contiguous phrase inside the name (chain kit → … CHAIN KIT …)
         phrase = [i for i, nt in named if _contains_seq(nt, tokens) >= 0]
@@ -985,38 +1053,48 @@ def exact_first_matches(
     return run(items)
 
 
-def _correct_name_query_tokens(query: str) -> Optional[str]:
+def _corrected_name_queries(query: str) -> list[str]:
     """Conservatively correct Latin typos against catalog *name* vocabulary.
 
-    This runs only after the original exact cascade found nothing. Requiring a
-    clear score margin prevents an uncertain token from becoming a confident
-    catalog discriminator. Model vocabulary is deliberately excluded.
+    For multi-word input, retain several spelling candidates and let the exact
+    catalog phrase decide (``cdi unit lead`` → catalog spelling ``... LEED``).
+    A single word still requires a clear score winner. Model vocabulary is
+    deliberately excluded.
     """
     tokens, unmapped = analyze_query(query)
     if unmapped or not tokens:
-        return None
+        return []
     derived = _derived()
     name_vocab = derived["name_vocab"]
     choices = derived["name_vocab_list"]
-    corrected: list[str] = []
-    changed = False
+    beams: list[tuple[list[str], float, bool]] = [([], 0.0, False)]
     for token in tokens:
         if token in name_vocab or not token.isalpha():
-            corrected.append(token)
-            continue
-        cutoff = 85 if len(token) <= 3 else (78 if len(tokens) == 1 else 70)
-        ranked = process.extract(
-            token, choices, scorer=fuzz.ratio, score_cutoff=cutoff, limit=2
-        )
-        if not ranked:
-            return None
-        best_word, best_score, _ = ranked[0]
-        second_score = ranked[1][1] if len(ranked) > 1 else 0
-        if best_score - second_score < 5:
-            return None
-        corrected.append(best_word)
-        changed = changed or best_word != token
-    return " ".join(corrected) if changed else None
+            options = [(token, 100.0)]
+        else:
+            cutoff = 85 if len(token) <= 3 else (78 if len(tokens) == 1 else 65)
+            ranked = process.extract(
+                token, choices, scorer=fuzz.ratio, score_cutoff=cutoff, limit=4
+            )
+            if not ranked:
+                return []
+            if len(tokens) == 1:
+                second_score = ranked[1][1] if len(ranked) > 1 else 0
+                if ranked[0][1] - second_score < 5:
+                    return []
+                ranked = ranked[:1]
+            options = [(word, float(score)) for word, score, _ in ranked]
+
+        next_beams: list[tuple[list[str], float, bool]] = []
+        for words, score, changed in beams:
+            for word, word_score in options:
+                next_beams.append(
+                    (words + [word], score + word_score, changed or word != token)
+                )
+        next_beams.sort(key=lambda row: row[1], reverse=True)
+        beams = next_beams[:32]
+
+    return [" ".join(words) for words, _, changed in beams if changed]
 
 
 _FILLER_WORDS = {
@@ -1093,8 +1171,7 @@ def find_catalog_matches(
     weak_hits = hits if hits and all(m.get("match_tier") == TIER_MOST for m in hits) else []
     if hits and not weak_hits:
         return hits[:limit]
-    corrected = _correct_name_query_tokens(q)
-    if corrected:
+    for corrected in _corrected_name_queries(q):
         hits = exact_first_matches(items, corrected, model)
         # Do not promote a weak "all but one word" result into a confident typo
         # correction; that tier is intentionally reserved for fuzzy fallback.

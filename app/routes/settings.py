@@ -59,6 +59,7 @@ def status():
         },
         "models": {
             "groq": os.getenv("GROQ_MODEL", "openai/gpt-oss-20b"),
+            "whisper": os.getenv("GROQ_WHISPER_MODEL", "whisper-large-v3"),
             "gemini": os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite"),
         },
     }

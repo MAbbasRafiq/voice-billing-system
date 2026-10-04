@@ -32,8 +32,9 @@ async function loadSettings() {
   const data = await res.json();
   document.getElementById('shop-name').value = data.shop_name || '';
   document.getElementById('groq-hint').textContent = data.keys.groq
-    ? ('Configured: ' + data.keys.groq_masked + ' · model ' + data.models.groq)
-    : 'Not set — will skip Groq';
+    ? ('Configured: ' + data.keys.groq_masked + ' · parser ' + data.models.groq
+       + ' · optional voice ' + data.models.whisper)
+    : 'Not set — Groq parsing and optional Whisper voice are unavailable';
   document.getElementById('gemini-hint').textContent = data.keys.gemini
     ? ('Configured: ' + data.keys.gemini_masked + ' · model ' + data.models.gemini)
     : 'Not set — will skip Gemini';

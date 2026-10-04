@@ -5,7 +5,8 @@ from __future__ import annotations
 import os
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
@@ -18,8 +19,44 @@ from app.database.queries import (
 from app.services.foc_calculator import calculate_foc
 from app.services.order_agent import resolve_order
 from app.services.pdf_generator import generate_bill_pdf
+from app.services.speech_to_text import TranscriptionUnavailable, transcribe_audio
 
 router = APIRouter(prefix="/api")
+
+MAX_AUDIO_BYTES = 10 * 1024 * 1024
+ALLOWED_AUDIO_TYPES = {
+    "audio/webm",
+    "audio/ogg",
+    "audio/wav",
+    "audio/x-wav",
+    "audio/mpeg",
+    "audio/mp4",
+    "video/webm",  # MediaRecorder may label an audio-only WebM this way
+}
+
+
+@router.post("/transcribe")
+async def transcribe_route(
+    audio: UploadFile = File(...),
+    language: str | None = Form(default=None),
+):
+    """Transcribe one browser recording; order parsing remains a separate step."""
+    content_type = (audio.content_type or "").split(";", 1)[0].lower()
+    if content_type not in ALLOWED_AUDIO_TYPES:
+        raise HTTPException(status_code=415, detail="Unsupported audio format.")
+    data = await audio.read(MAX_AUDIO_BYTES + 1)
+    if not data:
+        raise HTTPException(status_code=400, detail="The recording is empty.")
+    if len(data) > MAX_AUDIO_BYTES:
+        raise HTTPException(status_code=413, detail="Recording is too large (maximum 10 MB).")
+    lang = language if language in {"en", "ur"} else None
+    filename = audio.filename or "recording.webm"
+    try:
+        # Groq's SDK call is synchronous; keep it off the FastAPI event loop so
+        # catalog search and billing requests remain responsive during upload.
+        return await run_in_threadpool(transcribe_audio, data, filename, lang)
+    except TranscriptionUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 class OrderRequest(BaseModel):

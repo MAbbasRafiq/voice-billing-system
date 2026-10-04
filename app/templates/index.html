@@ -20,6 +20,13 @@
             <option value="ur-PK">Urdu (PK)</option>
           </select>
         </label>
+        <label class="text-sm flex items-center gap-2">
+          <span class="text-slate-600">Voice</span>
+          <select id="speech-engine" class="rounded-lg border border-slate-300 px-2 py-2 bg-white text-sm">
+            <option value="browser">Browser (fast)</option>
+            <option value="whisper">Groq Whisper</option>
+          </select>
+        </label>
         <button id="parse-btn" type="button"
           class="px-4 py-3 rounded-lg border border-slate-300 bg-white hover:bg-slate-50">
           Parse Text

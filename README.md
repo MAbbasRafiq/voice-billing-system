@@ -2,13 +2,14 @@
 
 Local voice-driven billing app for a motorcycle spare-parts shop. Speak a full order, resolve ambiguous part variants manually, apply FOC rules, preview the bill, then save and download a PDF.
 
-**Stack:** Python 3.11+ · FastAPI · SQLite · HTML + Tailwind CDN + vanilla JS · Web Speech API
+**Stack:** Python 3.11+ · FastAPI · SQLite · HTML + Tailwind CDN + vanilla JS · Web Speech API · optional Groq Whisper
 
 ---
 
 ## Features
 
 - Voice or typed order → AI parse (Groq → Gemini → offline RapidFuzz)
+- Browser voice by default; optional persistent Groq Whisper mode for more accurate Urdu/mixed speech
 - **Never auto-selects** a model variant when multiple matches exist
 - Disambiguation UI with multi-select and per-variant quantities
 - FOC (free-of-cost) lines on bill preview and PDF
@@ -23,7 +24,7 @@ Local voice-driven billing app for a motorcycle spare-parts shop. Speak a full o
 
 - Windows / macOS / Linux
 - Python **3.11+** (3.12 recommended)
-- Chrome or Edge for microphone input (Web Speech API)
+- A modern browser with microphone access (Chrome or Edge recommended)
 - Optional free API keys:
   - [Groq](https://console.groq.com) — primary
   - [Google AI Studio](https://aistudio.google.com) — fallback
@@ -59,6 +60,8 @@ GROQ_API_KEY=
 GEMINI_API_KEY=
 GEMINI_MODEL=gemini-2.5-flash-lite
 GROQ_MODEL=openai/gpt-oss-20b
+GROQ_WHISPER_MODEL=whisper-large-v3
+GROQ_WHISPER_TIMEOUT_SECONDS=30
 SHOP_NAME=Spare Parts Shop
 ```
 
@@ -113,7 +116,7 @@ Prints per-sheet import counts and a sample parse result.
 
 ## Typical workflow
 
-1. Hold **Hold to Speak** (or type the order) → **Parse Text**
+1. Choose Browser voice (default) or Groq Whisper, then click **Start Listening** (or type the order)
 2. Resolve ambiguous items in the disambiguation panel (select all needed variants + qty)
 3. Adjust cart quantities; FOC hints appear when thresholds are met
 4. **Preview Bill** (required before save)
@@ -138,6 +141,9 @@ Prints per-sheet import counts and a sample parse result.
 | `POST` | `/api/import`        | Force Excel re-import                     |
 | `GET`  | `/api/status`        | Active AI mode + import status            |
 
+
+Optional Whisper mode uploads one microphone recording to `POST /api/transcribe`;
+the returned text then uses the same `/api/parse-order` flow as browser speech and typed input.
 
 AI mode chain: **Groq** (`openai/gpt-oss-20b`) → **Gemini** (`gemini-2.5-flash-lite`) → **RapidFuzz** offline.
 

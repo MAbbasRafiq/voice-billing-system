@@ -49,7 +49,7 @@ def names_of(item):
 #   max_names: int           -> item with this substr has <= N distinct names
 CASES = [
     # ---- plain English ----
-    ("2 back light complete", dict(any=[("BACK LIGHT COMPLETE", 2)], max_names={"BACK LIGHT COMPLETE": 1})),
+    ("2 back light complete", dict(any=[("BACK LIGHT COMPLETE", 2)], min_names={"BACK LIGHT COMPLETE": 2})),
     ("1 back light led", dict(any=[("BACK LIGHT LED", 1)])),
     ("3 back light lens", dict(any=[("LENS", 3)])),
     ("5 chain kit", dict(any=[("CHAIN KIT", 5)])),
@@ -135,6 +135,37 @@ CASES = [
          action={"CARBURETOR": "disambiguate", "CABLE": "disambiguate"},
          min_names={"CARBURETOR": 5, "CABLE": 5},
      )),
+    # Joined Whisper words must resolve to their exact catalog family, without
+    # COMPLETE pulling unrelated HEAD LIGHT rows into BACK LIGHT results.
+    ("5 backlight complete, 6 backlight LED, 3 backtack, 2 basket, "
+     "8 cdi unit lead, and 3 chain lock",
+     dict(
+         n_items=6,
+         any=[
+             ("BACK LIGHT COMPLETE", 5), ("BACK LIGHT LED", 6),
+             ("BACK TACK", 3), ("BASKET", 2),
+             ("C.D.I UNIT LEED", 8), ("CHAIN LOCK", 3),
+         ],
+         max_names={
+             "BACK LIGHT LED": 1,
+             "BACK TACK": 1,
+         },
+         min_names={
+             "BACK LIGHT COMPLETE": 2,
+             "C.D.I UNIT LEED": 2,
+         },
+     )),
+    # Whisper Urdu CDI variant (ای instead of آئی) + لیڈ must not become LED lights,
+    # and must not auto-pick between LEED / LEED (MB100).
+    ("سی ڈی ای یونٹ لیڈ 6",
+     dict(
+         any=[("C.D.I UNIT LEED", 6)],
+         action={"C.D.I UNIT LEED": "disambiguate"},
+         min_names={"C.D.I UNIT LEED": 2},
+     )),
+    # Urdu BACK TACK must not collapse to BACK LIGHT COMPLETE
+    ("5 بیک ٹیک",
+     dict(any=[("BACK TACK", 5)], action={"BACK TACK": "disambiguate"}, max_names={"BACK TACK": 1})),
     # ---- Urdu ----
     ("پانچ چین کٹ", dict(any=[("CHAIN KIT", 5)])),
     ("پنج بیک لائٹ کمپلیٹ", dict(any=[("BACK LIGHT COMPLETE", 5)])),
