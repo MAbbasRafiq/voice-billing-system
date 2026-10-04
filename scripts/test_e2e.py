@@ -61,6 +61,14 @@ CASES = [
     ("side stand", dict(any=[("SIDE STAND", 1)])),
     ("7 clutch cable", dict(any=[("CLUTCH CABLE", 7)])),
     ("brake cable front 2", dict(any=[("BRAKE CABLE FRONT", 2)])),
+    # ---- generic single word: must list ALL variants, never auto-pick one ----
+    ("5 CARBURETOR or 3 air filter or 6 back light complete",
+     dict(n_items=3, any=[("CARBURETOR", 5), ("AIR FILTER", 3), ("BACK LIGHT COMPLETE", 6)],
+          action={"CARBURETOR": "disambiguate"}, min_names={"CARBURETOR": 5})),
+    ("5 carburetor", dict(action={"CARBURETOR": "disambiguate"}, min_names={"CARBURETOR": 5})),
+    ("4 carburator", dict(action={"CARBURETOR": "disambiguate"}, min_names={"CARBURETOR": 5})),
+    ("2 cable", dict(action={"CABLE": "disambiguate"}, min_names={"CABLE": 5})),
+    ("3 switch", dict(action={"SWITCH": "disambiguate"})),
     # ---- model-specific ----
     ("4 air filter for CD70", dict(any=[("AIR FILTER", 4)])),
     ("2 side stand victory", dict(any=[("SIDE STAND", 2)])),
@@ -143,6 +151,12 @@ def check(text, exp, r):
             if sub.upper() in " ".join(names_of(it) + [it["item"]]).upper():
                 if it["action"] != act:
                     errs.append(f"{sub!r} action {it['action']} != {act}")
+                break
+    for sub, mn in exp.get("min_names", {}).items():
+        for it in items:
+            if sub.upper() in it["item"].upper():
+                if len(names_of(it)) < mn:
+                    errs.append(f"{sub!r} shows only {len(names_of(it))} names < {mn} (auto-narrowed?)")
                 break
     for sub, mx in exp.get("max_names", {}).items():
         for it in items:
@@ -231,6 +245,37 @@ def cleanup_test_bills():
         conn.close()
 
 
+def search_checks():
+    """/api/search is used by search-as-you-type in 'Add from catalog'."""
+    errs = []
+    cases = [
+        ("ca", None), ("carb", "CARBURETOR"), ("carburetor", "CARBURETOR"), ("air fil", "AIR FILTER"),
+        ("filter air", "AIR FILTER"), ("chain k", "CHAIN KIT"), ("back li", "BACK LIGHT"),
+        ("6203", "BEARING 6203"), ("36-0322", "CARBURETOR"), ("cd70 air", "AIR"),
+        ("carburator", "CARBURETOR"), ("چین کٹ", "CHAIN KIT"),
+    ]
+    for q, want in cases:
+        from urllib.parse import quote
+        st, r, dt = call("GET", f"/api/search?q={quote(q)}&limit=40")
+        if st != 200:
+            errs.append(f"search {q!r} -> HTTP {st}")
+            continue
+        items = r["items"]
+        if dt > 1.0:
+            errs.append(f"search {q!r} slow: {dt:.2f}s")
+        if want and not any(want in i["name"].upper() for i in items[:10]):
+            errs.append(f"search {q!r}: {want} not in top 10: {[i['name'] for i in items[:5]]}")
+        if want is None and not items:
+            errs.append(f"search {q!r}: expected some results")
+    st, r, _ = call("GET", "/api/search?q=zzzzzz&limit=40")
+    if st != 200 or r["items"]:
+        errs.append(f"gibberish search should be empty, got {len(r.get('items', []))}")
+    st, r, _ = call("GET", "/api/search?q=carb&limit=40&models=CD70-EURO2")
+    if st != 200 or not r["items"] or r["items"][0]["model"] != "CD70-EURO2":
+        errs.append("preferred model should be listed first in search")
+    return errs
+
+
 def concurrency():
     import concurrent.futures as cf
 
@@ -283,6 +328,11 @@ def main():
     print(f"\nbill flow (bill #{bill_id}): {'OK' if not errs else 'FAIL'}")
     for e in errs:
         print("   -", e)
+    serrs = search_checks()
+    print(f"\nsearch-as-you-type: {'OK' if not serrs else 'FAIL'}")
+    for e in serrs:
+        print("   -", e)
+    errs = errs + serrs
     removed = cleanup_test_bills()
     print(f"cleanup: removed {removed} test bill(s)")
     wall, bad = concurrency()

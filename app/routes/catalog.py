@@ -7,7 +7,7 @@ from typing import Optional
 from fastapi import APIRouter, Query
 
 from app.database.queries import catalog_items, list_categories
-from app.services.fuzzy_search import rank_catalog
+from app.services.fuzzy_search import search_catalog
 
 router = APIRouter(prefix="/api")
 
@@ -39,7 +39,7 @@ def search(
     if models:
         preferred_models = [p.strip() for p in models.split(",") if p.strip()]
     return {
-        "items": rank_catalog(
+        "items": search_catalog(
             q,
             limit=limit,
             preferred_model=model,

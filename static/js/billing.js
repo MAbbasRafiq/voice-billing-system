@@ -255,8 +255,9 @@
         qty,
       });
     }
-    // Remember every selected model for this bill (additive — does not replace others)
-    rememberModel(item.model);
+    // Only an explicit admin choice becomes a preferred model. Auto-added items,
+    // repeat-last and reused bills must never silently lock a model.
+    if (opts && opts.remember) rememberModel(item.model);
     renderCart();
   }
 
@@ -621,7 +622,7 @@
       Object.entries(group.selected).forEach(([idStr, meta]) => {
         const id = Number(idStr);
         const match = group.matches.find((m) => m.id === id);
-        if (match) addToCart(match, meta.qty || group.qty || 1);
+        if (match) addToCart(match, meta.qty || group.qty || 1, { remember: true });
       });
       group.resolved = true;
     });
@@ -1010,16 +1011,42 @@
     true // capture so we beat button default Space/Enter behavior
   );
 
+  // Search-as-you-type: results refresh while typing (debounced); only the newest
+  // request may update the list, so a slow older response never overwrites it.
+  let manualSearchSeq = 0;
+  let manualAbort = null;
+  const MANUAL_MIN_CHARS = 2;
+
   async function manualSearch() {
-    const q = (document.getElementById('manual-search').value || '').trim();
+    const input = document.getElementById('manual-search');
+    const q = (input.value || '').trim();
     const box = document.getElementById('manual-results');
-    if (!q || !box) return;
-    const params = new URLSearchParams({ q });
+    if (!box) return;
+    const seq = ++manualSearchSeq;
+    if (manualAbort) manualAbort.abort();
+    if (q.length < MANUAL_MIN_CHARS) {
+      box.innerHTML = q
+        ? '<p class="text-slate-400">Keep typing…</p>'
+        : '';
+      return;
+    }
+    const params = new URLSearchParams({ q, limit: '40' });
     if (state.preferredModels.length) {
       params.set('models', state.preferredModels.join(','));
     }
-    const res = await fetch('/api/search?' + params.toString());
-    const data = await res.json();
+    manualAbort = new AbortController();
+    let data;
+    try {
+      const res = await fetch('/api/search?' + params.toString(), { signal: manualAbort.signal });
+      data = await res.json();
+    } catch (err) {
+      if (err && err.name === 'AbortError') return; // superseded by newer keystroke
+      if (seq === manualSearchSeq) {
+        box.innerHTML = '<p class="text-red-600">Search failed — check the server and retry.</p>';
+      }
+      return;
+    }
+    if (seq !== manualSearchSeq) return; // stale response
     const items = data.items || [];
     box.innerHTML = items
       .map((m, i) => {
@@ -1042,14 +1069,14 @@
     box.querySelectorAll('[data-add-idx]').forEach((btn) => {
       btn.addEventListener('click', () => {
         const item = items[Number(btn.getAttribute('data-add-idx'))];
-        if (item) addToCart(item, 1);
+        if (item) addToCart(item, 1, { remember: true });
       });
     });
     box.querySelectorAll('[data-add-ctn-idx]').forEach((btn) => {
       btn.addEventListener('click', () => {
         const item = items[Number(btn.getAttribute('data-add-ctn-idx'))];
         const ctn = ctnLabel(item && item.ctn_qty);
-        if (item && ctn) addToCart(item, ctn);
+        if (item && ctn) addToCart(item, ctn, { remember: true });
       });
     });
   }
@@ -1058,8 +1085,20 @@
   if (manualBtn) manualBtn.addEventListener('click', manualSearch);
   const manualInput = document.getElementById('manual-search');
   if (manualInput) {
+    let manualTimer = null;
+    manualInput.addEventListener('input', () => {
+      clearTimeout(manualTimer);
+      manualTimer = setTimeout(manualSearch, 150);
+    });
     manualInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') manualSearch();
+      if (e.key === 'Enter') {
+        clearTimeout(manualTimer);
+        manualSearch();
+      } else if (e.key === 'Escape') {
+        manualInput.value = '';
+        clearTimeout(manualTimer);
+        manualSearch();
+      }
     });
   }
 

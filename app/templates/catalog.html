@@ -28,14 +28,25 @@
   </div>
 </div>
 <script>
+let catSeq = 0;
+let catAbort = null;
 async function loadCatalog() {
   const q = document.getElementById('cat-q').value.trim();
   const category = document.getElementById('cat-category').value;
   const params = new URLSearchParams({ limit: '500' });
   if (q) params.set('q', q);
   if (category) params.set('category', category);
-  const res = await fetch('/api/catalog?' + params.toString());
-  const data = await res.json();
+  const seq = ++catSeq;
+  if (catAbort) catAbort.abort();
+  catAbort = new AbortController();
+  let data;
+  try {
+    const res = await fetch('/api/catalog?' + params.toString(), { signal: catAbort.signal });
+    data = await res.json();
+  } catch (err) {
+    return; // aborted by a newer keystroke, or server unreachable
+  }
+  if (seq !== catSeq) return; // stale response
   const sel = document.getElementById('cat-category');
   if (sel.options.length <= 1) {
     (data.categories || []).forEach(c => {
@@ -57,7 +68,16 @@ async function loadCatalog() {
   `).join('');
 }
 document.getElementById('cat-go').addEventListener('click', loadCatalog);
-document.getElementById('cat-q').addEventListener('keydown', e => { if (e.key === 'Enter') loadCatalog(); });
+// Filter while typing (debounced); Enter / category change apply immediately
+let catTimer = null;
+document.getElementById('cat-q').addEventListener('input', () => {
+  clearTimeout(catTimer);
+  catTimer = setTimeout(loadCatalog, 150);
+});
+document.getElementById('cat-q').addEventListener('keydown', e => {
+  if (e.key === 'Enter') { clearTimeout(catTimer); loadCatalog(); }
+});
+document.getElementById('cat-category').addEventListener('change', loadCatalog);
 loadCatalog();
 </script>
 {% endblock %}

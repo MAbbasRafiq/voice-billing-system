@@ -147,12 +147,14 @@ def catalog_items(
     try:
         clauses = ["1=1"]
         params: list[Any] = []
-        if q:
+        # Every typed word must appear somewhere (name / Urdu / code / model), in any
+        # order: "filter air" and "air cd70" work, not just one exact substring.
+        for word in (q or "").split():
             clauses.append(
                 "(name LIKE ? COLLATE NOCASE OR urdu_name LIKE ? "
                 "OR item_code LIKE ? COLLATE NOCASE OR model LIKE ? COLLATE NOCASE)"
             )
-            like = f"%{q}%"
+            like = f"%{word}%"
             params.extend([like, like, like, like])
         if category:
             clauses.append("category = ?")

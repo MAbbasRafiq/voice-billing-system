@@ -21,6 +21,17 @@ ROOT = Path(__file__).resolve().parent
 
 app = FastAPI(title="Billing System")
 
+
+@app.middleware("http")
+async def _static_revalidate(request: Request, call_next):
+    """Make browsers revalidate JS/CSS on every load (cheap 304 via ETag), so an
+    updated billing.js is picked up immediately instead of a stale cached copy."""
+    response = await call_next(request)
+    if request.url.path.startswith("/static/"):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
 app.mount("/static", StaticFiles(directory=str(ROOT / "static")), name="static")
 templates = Jinja2Templates(directory=str(ROOT / "app" / "templates"))
 

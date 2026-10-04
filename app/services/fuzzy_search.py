@@ -571,12 +571,18 @@ def reconcile_item_with_spoken(item: str, spoken: str) -> str:
     item_tokens = content_tokens(item)
     spoken_hint = english_query_hint(spoken)
 
-    # Spoken maps to a clear English phrase that diverges from LLM item
     if spoken_hint and spoken_tokens:
-        if not item_tokens or set(spoken_tokens) != set(item_tokens):
-            # e.g. spoken chain+kit vs LLM chain+cut
-            if not set(spoken_tokens).issubset(set(item_tokens)):
-                return spoken_hint
+        if _has_arabic_script(spoken):
+            # Spoken Urdu maps to a clear English phrase that diverges from the LLM
+            # item (e.g. spoken chain+kit vs LLM chain+cut) → trust the spoken words.
+            if not item_tokens or set(spoken_tokens) != set(item_tokens):
+                if not set(spoken_tokens).issubset(set(item_tokens)):
+                    return spoken_hint
+        elif item_tokens and set(item_tokens) < set(spoken_tokens):
+            # Latin input: the LLM DROPPED words ("brake cable front" → BRAKE CABLE).
+            # A mere spelling difference ("carburator" → CARBURETOR) is the LLM
+            # fixing a typo, so that case keeps the LLM item.
+            return spoken_hint
 
     if item and not _has_arabic_script(item):
         base = item
@@ -1114,6 +1120,146 @@ def rank_catalog(
         yes = [r for r in results if rank(r) < len(prefs_u)]
         no = [r for r in results if rank(r) >= len(prefs_u)]
         yes.sort(key=rank)
+        results = yes + no
+    return results[:limit]
+
+
+def _search_index() -> list[tuple]:
+    """Per-item search words, built once per catalog version."""
+    d = _derived()
+    idx = d.get("search_index")
+    if idx is None:
+        idx = []
+        for it in get_all_items_for_fuzzy():
+            name_n = _norm_text_cached(it.get("name") or "")
+            name_words = tuple(name_n.split())
+            other = []
+            other.extend(_norm_text_cached(it.get("model") or "").split())
+            other.extend(_norm_text_cached(it.get("item_code") or "").split())
+            urdu = (it.get("urdu_name") or "").strip()
+            if urdu and urdu != "-":
+                other.extend(_norm_text_cached(urdu).split())
+            code_raw = (it.get("item_code") or "").strip().lower()
+            idx.append((it, name_n, name_words, tuple(other), code_raw))
+        d["search_index"] = idx
+    return idx
+
+
+def _token_hit(token: str, words: tuple) -> int:
+    """2 = prefix of a word, 1 = inside a word (len>=3), 0 = no hit."""
+    cands = [token]
+    if len(token) > 3 and token.endswith("s"):
+        cands.append(token[:-1])  # filters → filter
+    best = 0
+    for t in cands:
+        for w in words:
+            if w.startswith(t):
+                return 2
+            if len(t) >= 3 and t in w:
+                best = 1
+    return best
+
+
+def _prefs_list(preferred_model, preferred_models) -> list[str]:
+    prefs: list[str] = []
+    if preferred_models:
+        prefs.extend([str(p).strip().lower() for p in preferred_models if p and str(p).strip()])
+    if preferred_model and str(preferred_model).strip():
+        prefs.append(str(preferred_model).strip().lower())
+    out: list[str] = []
+    for p in prefs:
+        if p not in out:
+            out.append(p)
+    return out
+
+
+def search_catalog(
+    q: str,
+    limit: int = 40,
+    preferred_model: Optional[str] = None,
+    preferred_models: Optional[list] = None,
+) -> list[dict]:
+    """
+    Search-as-you-type lookup for the "Add from catalog" box.
+
+    Works on partial input: every typed word must be the START of a word in the
+    item name / model / code / Urdu name ("carb", "air fil", "cd70 filt", "18-03").
+    Exact and name-prefix hits rank first; typo-tolerant fuzzy results are only
+    appended when too few direct hits exist.
+    """
+    q = (q or "").strip()
+    qn = _norm_text(q)
+    if not qn:
+        return []
+    token_sets = [qn.split()]
+    if _has_arabic_script(q):
+        toks, unmapped = analyze_query(q)
+        if toks and not unmapped:
+            token_sets.append(toks)
+    q_raw = q.lower()
+
+    scored: list[tuple[float, dict]] = []
+    for it, name_n, name_words, other_words, code_raw in _search_index():
+        best = 0.0
+        if code_raw and q_raw == code_raw:
+            best = 100.0
+        elif code_raw and len(q_raw) >= 3 and code_raw.startswith(q_raw):
+            best = 88.0  # typing an item code
+        for tokens in token_sets:
+            qtxt = " ".join(tokens)
+            all_words = name_words + other_words
+            hits = [_token_hit(t, all_words) for t in tokens]
+            if not all(hits):
+                continue
+            in_name = all(_token_hit(t, name_words) for t in tokens)
+            prefix_all = all(h == 2 for h in hits)
+            if name_n == qtxt:
+                sc = 99.0
+            elif name_n.startswith(qtxt):
+                sc = 95.0
+            elif in_name and prefix_all:
+                sc = 90.0 if _contains_seq(name_words, tokens) >= 0 else 87.0
+            elif prefix_all:
+                sc = 82.0  # words spread over name + model/code
+            else:
+                sc = 70.0  # at least one word only matched inside another word
+            sc -= min(max(len(name_n) - len(qtxt), 0), 40) * 0.1
+            best = max(best, sc)
+        if best:
+            scored.append((best, it))
+
+    scored.sort(key=lambda x: (-x[0], (x[1].get("name") or "").lower(), x[1].get("model") or ""))
+    results = []
+    seen = set()
+    for sc, it in scored:
+        row = dict(it)
+        row["score"] = round(sc, 1)
+        results.append(row)
+        seen.add(it["id"])
+
+    # Few direct hits → typo-tolerant extras ("carburator", "chian kit")
+    if len(results) < 8 and len(qn) >= 3:
+        for row in rank_catalog(q, limit=limit):
+            if row["id"] in seen or float(row.get("score") or 0) < 75:
+                continue
+            row = dict(row)
+            row["score"] = round(float(row["score"]) * 0.6, 1)  # always below direct hits
+            row["fuzzy"] = True
+            results.append(row)
+            seen.add(row["id"])
+
+    prefs = _prefs_list(preferred_model, preferred_models)
+    if prefs:
+        def rank(r):
+            model = (r.get("model") or "").lower()
+            for i, p in enumerate(prefs):
+                if p in model or (model and model in p):
+                    return i
+            return len(prefs)
+
+        yes = [r for r in results if rank(r) < len(prefs)]
+        no = [r for r in results if rank(r) >= len(prefs)]
+        yes.sort(key=rank)  # stable: keeps relevance order inside a model
         results = yes + no
     return results[:limit]
 

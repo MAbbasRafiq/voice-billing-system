@@ -22,6 +22,7 @@ from app.services.fuzzy_search import (
     content_tokens,
     transcript_matches_catalog,
     normalize_transcript,
+    EXACT_TIERS,
     leading_qty_hint,
     qty_before_phrase,
 )
@@ -107,14 +108,23 @@ def _name_scores(matches: list[dict]) -> list[tuple[str, float]]:
 
 
 def _needs_llm_name_pick(matches: list[dict], query: str) -> bool:
-    """True only when multiple name families remain after cheap local filters."""
+    """True only when multiple name families remain after cheap local filters.
+
+    The LLM must never *guess* between families the catalog already matched
+    exactly: e.g. "carburetor" matches CARBURETOR (PZ-18), (PZ-22), ... and
+    picking one name silently picks one bike model. Those cases go to the user.
+    """
+    # Exact cascade hits are authoritative: show every variant, let the user choose.
+    if matches and all(m.get("match_tier") in EXACT_TIERS for m in matches):
+        return False
     narrowed = _narrow_to_best_name(matches, query)
     names = _names_by_score(narrowed)
     if len(names) <= 1:
         return False
-    # Same product phrase in every name (CHAIN KIT …) → show all models/variants
+    # The request is contained in every candidate name (any length, even one
+    # word) → it is generic; keep all variants instead of letting the LLM pick.
     tokens = content_tokens(query)
-    if len(tokens) >= 2:
+    if tokens:
         phrase = " ".join(tokens)
         if all(phrase in n.lower() for n in names):
             return False
@@ -345,8 +355,11 @@ def resolve_order(
         matches = row["matches"]
 
         picked_name = picked_by_id.get(idx)
+        llm_narrowed = False
         if picked_name:
+            before_names = len(_names_by_score(matches))
             matches = _filter_matches_to_name(matches, picked_name)
+            llm_narrowed = before_names > 1
             query = picked_name
         else:
             # Local narrow when we skipped LLM or pick failed
@@ -356,6 +369,10 @@ def resolve_order(
                 query = names[0]
 
         action = _decide_action(line, matches, query)
+        # An LLM guess between several part families is never auto-added:
+        # the admin confirms it (mandatory disambiguation).
+        if llm_narrowed and action == "auto_add":
+            action = "disambiguate"
 
         confidence = line.get("confidence") or "ambiguous"
         if action == "disambiguate" or len(matches) != 1:
