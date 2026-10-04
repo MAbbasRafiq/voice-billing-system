@@ -178,6 +178,11 @@ CASES = [
     ("paanch chain kit", dict(any=[("CHAIN KIT", 5)])),
     ("teen air filter do basket", dict(n_items=2, any=[("AIR FILTER", 3), ("BASKET", 2)])),
     ("dus side stand", dict(any=[("SIDE STAND", 10)])),
+    # ---- Bilingual qty + English part name (client speech policy) ----
+    ("دو air filter", dict(any=[("AIR FILTER", 2)])),
+    ("teen chain kit", dict(any=[("CHAIN KIT", 3)])),
+    ("5 back light complete", dict(any=[("BACK LIGHT COMPLETE", 5)])),
+    ("ایک basket", dict(any=[("BASKET", 1)])),
     # ---- noise / junk (must not add anything) ----
     ("hello how are you background noise hmm", dict(ignored=True)),
     ("ok thanks bye", dict(ignored=True)),

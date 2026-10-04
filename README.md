@@ -116,11 +116,14 @@ Prints per-sheet import counts and a sample parse result.
 
 ## Typical workflow
 
-1. Choose Browser voice (default) or Groq Whisper, then click **Start Listening** (or type the order)
-2. Resolve ambiguous items in the disambiguation panel (select all needed variants + qty)
-3. Adjust cart quantities; FOC hints appear when thresholds are met
-4. **Preview Bill** (required before save)
-5. **Save & Download PDF** → stored under `data/bills/` and listed in History
+1. Choose Browser voice (default) or Groq Whisper, then click **Start Listening** (or type the order).
+   Prefer **English part names** with quantity in Urdu or English
+   (e.g. `دو air filter`, `teen chain kit`, `5 back light complete`).
+2. Click **Stop Listening** — the order is matched automatically (no need to click Parse Text).
+3. Resolve ambiguous items (select variants + qty). Use **Remove** to skip a wrong line.
+4. Adjust cart quantities; FOC hints appear when thresholds are met
+5. **Preview Bill** (required before save)
+6. **Save & Download PDF** → stored under `data/bills/` and listed in History
 
 ---
 

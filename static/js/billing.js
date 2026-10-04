@@ -3,6 +3,8 @@
  */
 (function () {
   const PREF_KEY = 'billing_preferred_models';
+  const VARIANT_KEY = 'billing_variant_memory';
+  const VARIANT_MAX = 200;
 
   function loadPreferredModels() {
     try {
@@ -13,6 +15,58 @@
     } catch (_) {
       return [];
     }
+  }
+
+  function loadVariantMemory() {
+    try {
+      const raw = localStorage.getItem(VARIANT_KEY);
+      if (!raw) return {};
+      const obj = JSON.parse(raw);
+      return obj && typeof obj === 'object' ? obj : {};
+    } catch (_) {
+      return {};
+    }
+  }
+
+  function persistVariantMemory(mem) {
+    try {
+      localStorage.setItem(VARIANT_KEY, JSON.stringify(mem));
+    } catch (_) {}
+  }
+
+  /** Remember last chosen model/item for an English part name family. */
+  function rememberVariant(name, model, itemId) {
+    const key = (name || '').trim().toLowerCase();
+    if (!key) return;
+    const mem = loadVariantMemory();
+    mem[key] = {
+      model: (model || '').trim() || null,
+      item_id: itemId != null ? Number(itemId) : null,
+      ts: Date.now(),
+    };
+    const keys = Object.keys(mem);
+    if (keys.length > VARIANT_MAX) {
+      keys
+        .sort((a, b) => (mem[a].ts || 0) - (mem[b].ts || 0))
+        .slice(0, keys.length - VARIANT_MAX)
+        .forEach((k) => delete mem[k]);
+    }
+    persistVariantMemory(mem);
+  }
+
+  function variantRank(match, partName) {
+    const key = (partName || match.name || '').trim().toLowerCase();
+    if (!key) return 999;
+    const mem = loadVariantMemory();
+    const entry = mem[key];
+    if (!entry) return 999;
+    if (entry.item_id != null && Number(match.id) === Number(entry.item_id)) return 0;
+    const remembered = (entry.model || '').toLowerCase();
+    const model = (match.model || '').toLowerCase();
+    if (remembered && model && (model.includes(remembered) || remembered.includes(model))) {
+      return 1;
+    }
+    return 999;
   }
 
   const state = {
@@ -90,10 +144,11 @@
     }
   }
 
-  function sortMatchesByPreference(matches) {
-    if (!state.preferredModels.length || !matches || !matches.length) return matches || [];
+  function sortMatchesByPreference(matches, partName) {
+    if (!matches || !matches.length) return matches || [];
     const prefs = state.preferredModels.map((p) => p.toLowerCase());
-    function rank(m) {
+    function prefRank(m) {
+      if (!prefs.length) return 0;
       const model = (m.model || '').toLowerCase();
       for (let i = 0; i < prefs.length; i++) {
         const p = prefs[i];
@@ -101,14 +156,16 @@
       }
       return prefs.length;
     }
-    const yes = [];
-    const no = [];
-    matches.forEach((m) => {
-      if (rank(m) < prefs.length) yes.push(m);
-      else no.push(m);
+    const sorted = matches.slice().sort((a, b) => {
+      const pa = prefRank(a);
+      const pb = prefRank(b);
+      if (pa !== pb) return pa - pb;
+      const va = variantRank(a, partName || a.name);
+      const vb = variantRank(b, partName || b.name);
+      if (va !== vb) return va - vb;
+      return 0;
     });
-    yes.sort((a, b) => rank(a) - rank(b));
-    return yes.concat(no);
+    return sorted;
   }
 
   function focPreview(item) {
@@ -278,7 +335,7 @@
   }
 
   function filteredMatches(group) {
-    let matches = sortMatchesByPreference(group.matches || []);
+    let matches = sortMatchesByPreference(group.matches || [], group.item || group.spoken);
     const filter = (group.modelFilter || '').trim().toLowerCase();
     if (!filter) return matches;
     const filtered = matches.filter((m) => (m.model || '').toLowerCase().includes(filter));
@@ -451,18 +508,47 @@
 
         return `
         <div class="border border-amber-200 bg-amber-50/50 rounded-xl p-3" data-pending-group="${realIndex}">
-          <div class="text-sm mb-2">
-            <span class="font-medium">“${group.spoken || group.item}”</span>
-            <span class="text-slate-500"> · qty ${group.qty || 1}
-            ${group.model ? ' · said model ' + group.model : ''}
-            · ${group.confidence || 'ambiguous'}
-            · ${matches.length}/${(group.matches || []).length} shown</span>
+          <div class="flex flex-wrap items-start justify-between gap-2 mb-2">
+            <div class="text-sm">
+              <span class="font-medium">“${group.spoken || group.item}”</span>
+              <span class="text-slate-500"> · qty ${group.qty || 1}
+              ${group.model ? ' · said model ' + group.model : ''}
+              · ${group.confidence || 'ambiguous'}
+              · ${matches.length}/${(group.matches || []).length} shown</span>
+            </div>
+            <button type="button" data-skip-group="${realIndex}"
+              class="text-xs px-2 py-1 rounded border border-slate-300 bg-white text-slate-600 hover:text-red-700 hover:border-red-300"
+              title="Remove this line without adding to cart">
+              Remove
+            </button>
           </div>
           ${chips}
           <div class="grid sm:grid-cols-2 gap-2">${cards}</div>
         </div>`;
       })
       .join('');
+
+    list.querySelectorAll('[data-skip-group]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const gi = Number(btn.getAttribute('data-skip-group'));
+        const group = state.pending[gi];
+        if (!group) return;
+        group.resolved = true;
+        group.skipped = true;
+        group.selected = {};
+        const notice = document.getElementById('parse-notice');
+        if (notice) {
+          notice.textContent = 'Skipped “' + (group.spoken || group.item || 'item') + '”.';
+          notice.classList.remove('hidden');
+        }
+        const still = state.pending.filter((g) => !g.resolved);
+        if (still.length) {
+          state.focus.groupIndex = state.pending.indexOf(still[0]);
+          state.focus.matchIndex = 0;
+        }
+        renderDisambiguation();
+      });
+    });
 
     list.querySelectorAll('input[type=checkbox][data-group]').forEach((cb) => {
       cb.addEventListener('change', () => {
@@ -616,13 +702,16 @@
 
   function confirmResolved() {
     state.pending.forEach((group) => {
-      if (group.resolved) return;
+      if (group.resolved || group.skipped) return;
       if (!group.selected || !Object.keys(group.selected).length) return;
       if (!(group.matches || []).length) return;
       Object.entries(group.selected).forEach(([idStr, meta]) => {
         const id = Number(idStr);
         const match = group.matches.find((m) => m.id === id);
-        if (match) addToCart(match, meta.qty || group.qty || 1, { remember: true });
+        if (match) {
+          addToCart(match, meta.qty || group.qty || 1, { remember: true });
+          rememberVariant(group.item || match.name, match.model, match.id);
+        }
       });
       group.resolved = true;
     });
@@ -698,7 +787,10 @@
     (data.items || []).forEach((group) => {
       group.selected = {};
       group.resolved = false;
-      group.matches = sortMatchesByPreference(group.matches || []);
+      group.matches = sortMatchesByPreference(
+        group.matches || [],
+        group.item || group.spoken
+      );
       group.modelFilter = group.model || '';
       const action = group.action || '';
 
@@ -709,7 +801,9 @@
         group.matches &&
         group.matches.length === 1
       ) {
-        addToCart(group.matches[0], group.qty || 1);
+        const only = group.matches[0];
+        addToCart(only, group.qty || 1);
+        rememberVariant(group.item || only.name, only.model, only.id);
         group.resolved = true;
         return;
       }

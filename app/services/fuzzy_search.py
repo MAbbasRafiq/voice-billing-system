@@ -50,8 +50,10 @@ PART_WORD_ALIASES = {
     "ہیڈ": "head",
     "ہید": "head",
     "لینز": "lens",
+    "لینس": "lens",  # catalog sheet spelling
     "کمپلیٹ": "complete",
     "کمپلت": "complete",
+    "مکمل": "complete",  # catalog Urdu for COMPLETE
     "آئل": "oil",
     "سیل": "seal",
     "کلچ": "clutch",
@@ -59,6 +61,12 @@ PART_WORD_ALIASES = {
     "باسکٹ": "basket",
     "بسکٹ": "basket",
     "یونٹ": "unit",
+    "لاک": "lock",
+    "لوگ": "lock",
+    "ٹائمنگ": "timing",
+    "شاک": "shock",
+    "اسٹینڈ": "stand",
+    "سٹینڈ": "stand",
     # Catalog spelling is LEED ("C.D.I UNIT LEED"). Whisper/Urdu often writes لیڈ;
     # LED itself is the separate phrase "ایل ای ڈی".
     "لیڈ": "leed",
@@ -74,14 +82,39 @@ PART_PHRASE_ALIASES = {
     "سی ڈی ای یونٹ": "cdi unit",
     "سی ڈی اے": "cdi",
     "سی ڈی اے یونٹ": "cdi unit",
+    # Catalog punctuation variants (۔ / -)
+    "سی۔ڈی۔آئی": "cdi",
+    "سی۔ڈی۔آئی یونٹ": "cdi unit",
+    "سی-ڈی-آئی": "cdi",
+    "سی-ڈی-آئی یونٹ": "cdi unit",
     "ایئر فلٹر": "air filter",
     "ائیر فلٹر": "air filter",
     "چین کٹ": "chain kit",
+    "چین کِٹ": "chain kit",
     "چین لوگ": "chain lock",
+    "چین لاک": "chain lock",
     "بیک لائٹ": "back light",
+    "بیک لائٹ مکمل": "back light complete",
+    "بیک لائٹ کمپلیٹ": "back light complete",
+    "بیک لائٹ لینس": "back light lens",
+    "بیک لائٹ لینز": "back light lens",
     "ہیڈ لائٹ": "head light",
+    "ہیڈ لائٹ مکمل": "head light complete",
+    "ہیڈ لائٹ کمپلیٹ": "head light complete",
+}
+
+# Spoken Urdu model hints → English catalog fragment (soft match)
+MODEL_SPOKEN_ALIASES = {
+    "سی ڈی 70": "cd70",
+    "سی ڈی ستر": "cd70",
+    "سیڈی 70": "cd70",
+    "سی جی 125": "cg125",
+    "سیجی 125": "cg125",
+    "یورو 2": "euro2",
+    "یورو۲": "euro2",
 }
 _PHRASES_LONGEST_FIRST = sorted(PART_PHRASE_ALIASES.items(), key=lambda kv: -len(kv[0]))
+_MODEL_SPOKEN_LONGEST_FIRST = sorted(MODEL_SPOKEN_ALIASES.items(), key=lambda kv: -len(kv[0]))
 
 QUERY_STOPWORDS = set(URDU_QTY_WORDS.keys()) | {
     "for",
@@ -313,6 +346,9 @@ def content_tokens(text: str) -> list[str]:
     for phrase, eng in _PHRASES_LONGEST_FIRST:
         if phrase in t:
             t = t.replace(phrase, " " + eng + " ")
+    for phrase, eng in _MODEL_SPOKEN_LONGEST_FIRST:
+        if phrase in t:
+            t = t.replace(phrase, " " + eng + " ")
     raw = [x for x in re.split(r"[^\w\u0600-\u06FF]+", t) if x]
     out: list[str] = []
     seen: set[str] = set()
@@ -416,10 +452,12 @@ DISC_ALIAS_TO_CANON: dict[str, str] = {
     "complete": "complete",
     "کمپلیٹ": "complete",
     "کمپلت": "complete",
+    "مکمل": "complete",
     "led": "led",
     "ایل_ای_ڈی": "led",
     "lens": "lens",
     "لینز": "lens",
+    "لینس": "lens",
     "assy": "assy",
     "assembly": "assy",
     "set": "set",
@@ -434,9 +472,9 @@ DISC_ALIAS_TO_CANON: dict[str, str] = {
 
 # Substrings that count as a hit for each canonical discriminator in name/urdu.
 DISC_NAME_FORMS: dict[str, tuple[str, ...]] = {
-    "complete": ("complete", "کمپلیٹ", "کمپلت"),
+    "complete": ("complete", "کمپلیٹ", "کمپلت", "مکمل"),
     "led": ("led", "ایل ای ڈی"),
-    "lens": ("lens", "لینز"),
+    "lens": ("lens", "لینز", "لینس"),
     "assy": ("assy", "assembly"),
     "set": ("set",),
     "kit": ("kit",),
@@ -801,6 +839,9 @@ def analyze_query(text: str) -> tuple[list[str], int]:
     """
     t = (text or "").lower().replace(".", "")
     for phrase, eng in _PHRASES_LONGEST_FIRST:
+        if phrase in t:
+            t = t.replace(phrase, " " + eng + " ")
+    for phrase, eng in _MODEL_SPOKEN_LONGEST_FIRST:
         if phrase in t:
             t = t.replace(phrase, " " + eng + " ")
     raw = [x for x in re.split(r"[^\w\u0600-\u06FF]+", t) if x]

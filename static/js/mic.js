@@ -55,7 +55,7 @@
           : 'Browser speech is not supported — try Groq Whisper or type';
       } else {
         const engine = currentEngine() === 'whisper' ? 'Whisper' : 'Browser';
-        micState.textContent = 'Ready (' + lang + ', ' + engine + ') — click mic to speak';
+        micState.textContent = 'Ready (' + lang + ', ' + engine + ') — stop mic to auto-match';
       }
     }
   }
@@ -187,7 +187,7 @@
       }
       transcript.value = (data.text || '').trim();
       setButtonIdle();
-      if (micState) micState.textContent = 'Whisper transcript ready — resolving order…';
+      if (micState) micState.textContent = 'Transcript ready — matching order…';
       maybeParseTranscript();
     } catch (err) {
       setButtonIdle();

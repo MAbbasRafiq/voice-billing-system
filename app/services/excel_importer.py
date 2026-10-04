@@ -64,6 +64,36 @@ def _to_float(val: Any) -> Optional[float]:
         return None
 
 
+def _clean_urdu_name(val: Any) -> Optional[str]:
+    """Treat Excel placeholders as missing Urdu (do not index '-')."""
+    if val is None:
+        return None
+    text = str(val).strip()
+    if not text or text in {"-", ".", "—", "–", "n/a", "N/A", "NA"}:
+        return None
+    return text
+
+
+# Known sheet typos / spacing variants → canonical model string
+_MODEL_ALIASES = {
+    "cd70 euro-2": "CD70-EURO2",
+    "cd70 euro 2": "CD70-EURO2",
+    "cd70-euro 2": "CD70-EURO2",
+    "raftar": "RAFTAAR",
+}
+
+
+def _normalize_model(val: Any) -> Optional[str]:
+    if val is None:
+        return None
+    text = str(val).replace("\xa0", " ").strip()
+    if not text:
+        return None
+    text = " ".join(text.split())
+    mapped = _MODEL_ALIASES.get(text.lower())
+    return mapped if mapped else text
+
+
 def _map_headers(header_cells: list[Any]) -> dict[str, int]:
     """Map canonical field name -> column index."""
     mapping: dict[str, int] = {}
@@ -180,14 +210,12 @@ def import_all_sheets(force: bool = False, path: Path = EXCEL_PATH) -> dict:
                 if cp is None:
                     continue
 
-                model = cell("model")
-                urdu = cell("urdu_name")
                 rows_out.append(
                     (
                         str(item_code).strip(),
-                        None if model is None or str(model).strip() == "" else str(model).strip(),
+                        _normalize_model(cell("model")),
                         str(name).strip(),
-                        None if urdu is None or str(urdu).strip() == "" else str(urdu).strip(),
+                        _clean_urdu_name(cell("urdu_name")),
                         sheet_name,
                         _to_int(cell("ctn_qty")),
                         cp,

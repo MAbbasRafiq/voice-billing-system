@@ -32,7 +32,13 @@ def get_latest_import() -> Optional[dict]:
 
 
 def clear_items(conn) -> None:
-    conn.execute("DELETE FROM items")
+    # Historical bill_items may reference item ids; catalog replace reassigns ids.
+    # Bills keep denormalized line fields for display — allow a full catalog wipe.
+    conn.execute("PRAGMA foreign_keys = OFF")
+    try:
+        conn.execute("DELETE FROM items")
+    finally:
+        conn.execute("PRAGMA foreign_keys = ON")
 
 
 def insert_import_log(conn, file_modified: str, item_count: int) -> None:

@@ -6,7 +6,6 @@
   <section class="lg:col-span-3 space-y-4">
     <div class="card-soft rounded-xl p-4">
       <h1 class="font-display text-2xl font-semibold mb-1">Speak the order</h1>
-      <p class="text-slate-600 text-sm mb-4">Click the mic to start/stop, then resolve any ambiguous items.</p>
 
       <div class="flex flex-wrap items-center gap-3 mb-3">
         <button id="mic-btn" type="button"
@@ -42,7 +41,7 @@
       <label class="block text-sm font-medium mb-1" for="transcript">Transcript / typed order</label>
       <textarea id="transcript" rows="3"
         class="w-full rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-accent/40"
-        placeholder="e.g. 2 air filter for CD70 and 5 bearing 6203"></textarea>
+        placeholder="e.g. دو air filter, teen chain kit, 5 back light complete"></textarea>
       <p id="parse-notice" class="hidden mt-2 text-sm text-amber-800"></p>
 
       <div id="model-lock-bar"
@@ -66,7 +65,7 @@
         </button>
       </div>
       <p class="text-xs text-slate-500 mb-2">
-        Keys: ↑↓ move · Space select · Enter confirm · type to filter model
+        Keys: ↑↓ move · Space select · Enter confirm · type to filter model · Remove skips a line
       </p>
       <div id="disambiguation-list" class="space-y-4"></div>
     </div>

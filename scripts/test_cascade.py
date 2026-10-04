@@ -26,6 +26,8 @@ CASES = [
     ("چین لوگ", None, ["CHAIN LOCK"], ["CHAIN KIT"], None),                           # Urdu fuzzy ok
     ("BACK LIGHT COMPLETE", None, ["BACK LIGHT COMPLETE", "BACK LIGHT COMPLETE (2003 MODEL)"], ["BACK LIGHT LED", "BACK LIGHT LENS"], "exact"),
     ("backlight complete", None, ["BACK LIGHT COMPLETE", "BACK LIGHT COMPLETE (2003 MODEL)"], ["HEAD LIGHT COMPLETE"], "exact"),
+    ("بیک لائٹ مکمل", None, ["BACK LIGHT COMPLETE"], ["BACK LIGHT LED", "BACK LIGHT LENS"], None),
+    ("بیک لائٹ لینس", None, ["BACK LIGHT LENS"], ["BACK LIGHT LED", "BACK LIGHT COMPLETE"], None),
     ("backtack", None, ["BACK TACK"], ["BACK TAKE"], "exact"),
     ("بیک ٹیک", None, ["BACK TACK"], ["BACK LIGHT COMPLETE", "BACK TAKE"], "exact"),
     ("5 بیک ٹیک", None, ["BACK TACK"], ["BACK LIGHT COMPLETE", "BACK TAKE"], "exact"),
