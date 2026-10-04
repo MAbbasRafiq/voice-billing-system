@@ -35,7 +35,10 @@ CASES = [
     ("filter air", None, ["AIR FILTER"], [], "words"),                                 # word order
     ("air filter cd70", None, ["AIR FILTER"], [], None),                               # model left in text
     ("air filter", "CD70", ["AIR FILTER"], [], "exact"),
-    ("air filtre", None, ["AIR FILTER"], [], None),                                    # typo → fuzzy
+    ("air filtre", None, ["AIR FILTER"], [], "exact"),                                 # clear typo → corrected exact
+    ("carburator", None, ["CARBURETOR (PZ-18)", "CARBURETOR (PZ-22)"], [], "phrase"),
+    ("clach cable", None, ["CLUTCH CABLE"], ["BRAKE CABLE", "METER CABLE"], "exact"),
+    ("brak cable front", None, ["BRAKE CABLE FRONT"], ["BRAKE CABLE REAR"], "exact"),
     ("bearing 6203", None, ["6203"], ["6000"], None),                                  # number token kept
 ]
 

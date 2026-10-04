@@ -69,6 +69,14 @@ CASES = [
     ("4 carburator", dict(action={"CARBURETOR": "disambiguate"}, min_names={"CARBURETOR": 5})),
     ("2 cable", dict(action={"CABLE": "disambiguate"}, min_names={"CABLE": 5})),
     ("3 switch", dict(action={"SWITCH": "disambiguate"})),
+    # ---- model-only text must ask for a part, never match model text in a name ----
+    ("cd70", dict(ignored=True, reason="model_only")),
+    ("2 cd70", dict(ignored=True, reason="model_only")),
+    ("cg125", dict(ignored=True, reason="model_only")),
+    ("star", dict(ignored=True, reason="model_only")),
+    ("125", dict(ignored=True, reason="model_only")),
+    # Similar text that is genuinely embedded in an item name still resolves.
+    ("cd70c", dict(any=[("FUEL COCK", 1)])),
     # ---- model-specific ----
     ("4 air filter for CD70", dict(any=[("AIR FILTER", 4)])),
     ("2 side stand victory", dict(any=[("SIDE STAND", 2)])),
@@ -87,6 +95,46 @@ CASES = [
     ("4 air filter 12 basket 3 clutch cable",
      dict(n_items=3, any=[("AIR FILTER", 4), ("BASKET", 12), ("CLUTCH CABLE", 3)])),
     ("chain kit 5 chain lock 6", dict(n_items=2, any=[("CHAIN KIT", 5), ("CHAIN LOCK", 6)])),
+    # Long separator-free orders: typo correction may identify a family, but
+    # must never invent a model/name variant the user did not say.
+    ("5 carburator 3 air filtre 6 back lite complete 2 clach cable 4 chian kit "
+     "7 chain lok 2 cdi unite 3 bascket 5 side stend 2 brak cable front",
+     dict(
+         n_items=10,
+         any=[
+             ("CARBURETOR", 5), ("AIR FILTER", 3), ("BACK LIGHT COMPLETE", 6),
+             ("CLUTCH CABLE", 2), ("CHAIN KIT", 4), ("CHAIN LOCK", 7),
+             ("C.D.I. UNIT", 2), ("BASKET", 3), ("SIDE STAND", 5),
+             ("BRAKE CABLE FRONT", 2),
+         ],
+         action={"CARBURETOR": "disambiguate"},
+         min_names={"CARBURETOR": 5},
+     )),
+    ("4 carborator 2 air filtar 3 bak light led 5 clutch cabal 6 chain ket "
+     "2 side stend 1 cdi unet 7 bascket",
+     dict(
+         n_items=8,
+         any=[
+             ("CARBURETOR", 4), ("AIR FILTER", 2), ("BACK LIGHT LED", 3),
+             ("CLUTCH CABLE", 5), ("CHAIN KIT", 6), ("SIDE STAND", 2),
+             ("C.D.I. UNIT", 1), ("BASKET", 7),
+         ],
+         action={"CARBURETOR": "disambiguate"},
+         min_names={"CARBURETOR": 5},
+     )),
+    ("2 carburetor 3 cable 4 switch 5 air filter 6 basket 7 chain kit "
+     "8 chain lock 9 back light complete 10 cdi unit 11 side stand",
+     dict(
+         n_items=10,
+         any=[
+             ("CARBURETOR", 2), ("CABLE", 3), ("SWITCH", 4),
+             ("AIR FILTER", 5), ("BASKET", 6), ("CHAIN KIT", 7),
+             ("CHAIN LOCK", 8), ("BACK LIGHT COMPLETE", 9),
+             ("C.D.I. UNIT", 10), ("SIDE STAND", 11),
+         ],
+         action={"CARBURETOR": "disambiguate", "CABLE": "disambiguate"},
+         min_names={"CARBURETOR": 5, "CABLE": 5},
+     )),
     # ---- Urdu ----
     ("پانچ چین کٹ", dict(any=[("CHAIN KIT", 5)])),
     ("پنج بیک لائٹ کمپلیٹ", dict(any=[("BACK LIGHT COMPLETE", 5)])),
@@ -133,6 +181,10 @@ def check(text, exp, r):
     if exp.get("ignored"):
         if items:
             errs.append(f"expected ignored, got {[ (i['item'], i['qty']) for i in items]}")
+    if "reason" in exp:
+        reasons = {i.get("reason") for i in r.get("ignored", [])}
+        if exp["reason"] not in reasons:
+            errs.append(f"ignored reason {reasons} != {exp['reason']!r}")
     if "n_items" in exp and len(items) != exp["n_items"]:
         errs.append(f"expected {exp['n_items']} items, got {len(items)}: {[i['item'] for i in items]}")
     for sub, qty in exp.get("any", []):
@@ -153,17 +205,25 @@ def check(text, exp, r):
                     errs.append(f"{sub!r} action {it['action']} != {act}")
                 break
     for sub, mn in exp.get("min_names", {}).items():
+        found = False
         for it in items:
-            if sub.upper() in it["item"].upper():
+            if sub.upper() in " ".join(names_of(it) + [it["item"]]).upper():
+                found = True
                 if len(names_of(it)) < mn:
                     errs.append(f"{sub!r} shows only {len(names_of(it))} names < {mn} (auto-narrowed?)")
                 break
+        if not found:
+            errs.append(f"no item found for min_names check {sub!r}")
     for sub, mx in exp.get("max_names", {}).items():
+        found = False
         for it in items:
-            if sub.upper() in it["item"].upper():
+            if sub.upper() in " ".join(names_of(it) + [it["item"]]).upper():
+                found = True
                 if len(names_of(it)) > mx:
                     errs.append(f"{sub!r} has {len(names_of(it))} names > {mx}")
                 break
+        if not found:
+            errs.append(f"no item found for max_names check {sub!r}")
     return errs
 
 

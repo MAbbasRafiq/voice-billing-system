@@ -25,6 +25,7 @@ from app.services.fuzzy_search import (
     EXACT_TIERS,
     leading_qty_hint,
     qty_before_phrase,
+    is_model_only_query,
 )
 
 
@@ -239,6 +240,18 @@ def resolve_order(
     """
     text = normalize_transcript((text or "")[:2000])
     preferred_models = preferred_models or []
+
+    # A model by itself is not an order line. Handle this before the local parser
+    # (which may otherwise match the model text embedded in one unrelated name)
+    # and before the relevance gate (numeric shorthand such as "125").
+    if _looks_like_order(text) and is_model_only_query(text):
+        return {
+            "mode": "local",
+            "items": [],
+            "ignored": [{"spoken": text, "reason": "model_only"}],
+            "summary": {"auto_added": 0, "needs_review": 0, "ignored": 1},
+            "message": "That looks like a bike model. Please also enter the part name.",
+        }
 
     if not _looks_like_order(text) or not transcript_matches_catalog(text):
         return {

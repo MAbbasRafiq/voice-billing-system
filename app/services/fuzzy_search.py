@@ -717,22 +717,40 @@ def _derived() -> dict:
     ver = items_version()
     if _DERIVED.get("version") != ver:
         items = get_all_items_for_fuzzy()
-        model_seqs = {
-            _name_tokens_t(m.get("model") or "")
-            for m in items
-            if m.get("model")
-        }
+        model_seq_counts: dict[tuple, int] = {}
+        name_seq_counts: dict[tuple, int] = {}
+        for item in items:
+            model_seq = _name_tokens_t(item.get("model") or "")
+            name_seq = _name_tokens_t(item.get("name") or "")
+            if model_seq:
+                model_seq_counts[model_seq] = model_seq_counts.get(model_seq, 0) + 1
+            if name_seq:
+                name_seq_counts[name_seq] = name_seq_counts.get(name_seq, 0) + 1
+        model_seqs = set(model_seq_counts)
         model_seqs.discard(())
         vocab: set[str] = set()
+        name_vocab: set[str] = set()
         for i in items:
-            vocab.update(_name_tokens_t(i.get("name") or ""))
+            name_tokens = _name_tokens_t(i.get("name") or "")
+            vocab.update(name_tokens)
+            name_vocab.update(name_tokens)
             vocab.update(_name_tokens_t(i.get("model") or ""))
         vocab.discard("")
         _DERIVED = {
             "version": ver,
             "model_seqs": model_seqs,
+            "model_seq_counts": model_seq_counts,
+            "name_seq_counts": name_seq_counts,
+            "exact_item_names": {
+                _norm_text_cached(i.get("name") or "") for i in items if i.get("name")
+            },
+            "exact_item_codes": {
+                _norm_text_cached(i.get("item_code") or "") for i in items if i.get("item_code")
+            },
             "vocab": vocab,
             "vocab_list": list(vocab),
+            "name_vocab": name_vocab,
+            "name_vocab_list": list(name_vocab),
             "choices": None,
         }
     return _DERIVED
@@ -765,6 +783,66 @@ def analyze_query(text: str) -> tuple[list[str], int]:
             if piece and piece not in out:
                 out.append(piece)
     return out, unmapped
+
+
+def is_model_only_query(text: str) -> bool:
+    """True when the complete request identifies a catalog model, not a part.
+
+    This is intentionally catalog-derived rather than a list of bike names.
+    Exact item names/codes win, while model-family shorthand is accepted for
+    digit-bearing names (``cd70`` → CD70F/CD70-CDI, ``125`` → CG125).
+    """
+    _, item_text = strip_leading_qty(text)
+    normalized = _norm_text(item_text)
+    if not normalized:
+        return False
+
+    derived = _derived()
+    if (
+        normalized in derived["exact_item_names"]
+        or normalized in derived["exact_item_codes"]
+    ):
+        return False
+
+    tokens, unmapped = analyze_query(item_text)
+    if unmapped or not tokens:
+        return False
+
+    def token_matches(query_token: str, model_token: str) -> bool:
+        if query_token == model_token:
+            return True
+        # Bike families commonly append letters/numbers without separators:
+        # CD70 → CD70F and 125 → CG125. Restrict partial matching to numeric
+        # model tokens so ordinary words such as "air" cannot be misclassified.
+        return (
+            any(c.isdigit() for c in query_token)
+            and len(query_token) >= 2
+            and (model_token.startswith(query_token) or query_token in model_token)
+        )
+
+    model_rows = 0
+    for model_seq, count in derived["model_seq_counts"].items():
+        if len(tokens) > len(model_seq):
+            continue
+        # Preserve word order but allow the shorthand to identify a model
+        # family represented by a longer catalog model.
+        for start in range(len(model_seq) - len(tokens) + 1):
+            window = model_seq[start : start + len(tokens)]
+            if all(token_matches(q, m) for q, m in zip(tokens, window)):
+                model_rows += count
+                break
+
+    # A token such as 6203 can be both a bearing identifier and its model
+    # column value. Only classify model-only text when catalog evidence is
+    # strong and clearly dominates occurrences in item names.
+    name_rows = 0
+    for name_seq, count in derived["name_seq_counts"].items():
+        if any(
+            all(token_matches(q, m) for q, m in zip(tokens, name_seq[start:]))
+            for start in range(max(0, len(name_seq) - len(tokens) + 1))
+        ):
+            name_rows += count
+    return model_rows >= 3 and model_rows >= max(3, name_rows * 3)
 
 
 def _contains_seq(hay: list[str], needle: list[str]) -> int:
@@ -907,6 +985,40 @@ def exact_first_matches(
     return run(items)
 
 
+def _correct_name_query_tokens(query: str) -> Optional[str]:
+    """Conservatively correct Latin typos against catalog *name* vocabulary.
+
+    This runs only after the original exact cascade found nothing. Requiring a
+    clear score margin prevents an uncertain token from becoming a confident
+    catalog discriminator. Model vocabulary is deliberately excluded.
+    """
+    tokens, unmapped = analyze_query(query)
+    if unmapped or not tokens:
+        return None
+    derived = _derived()
+    name_vocab = derived["name_vocab"]
+    choices = derived["name_vocab_list"]
+    corrected: list[str] = []
+    changed = False
+    for token in tokens:
+        if token in name_vocab or not token.isalpha():
+            corrected.append(token)
+            continue
+        cutoff = 85 if len(token) <= 3 else (78 if len(tokens) == 1 else 70)
+        ranked = process.extract(
+            token, choices, scorer=fuzz.ratio, score_cutoff=cutoff, limit=2
+        )
+        if not ranked:
+            return None
+        best_word, best_score, _ = ranked[0]
+        second_score = ranked[1][1] if len(ranked) > 1 else 0
+        if best_score - second_score < 5:
+            return None
+        corrected.append(best_word)
+        changed = changed or best_word != token
+    return " ".join(corrected) if changed else None
+
+
 _FILLER_WORDS = {
     "hello", "hi", "hey", "how", "are", "you", "the", "and", "for", "ok", "okay",
     "thanks", "thank", "bye", "yes", "no", "please", "give", "need", "want", "can",
@@ -975,8 +1087,21 @@ def find_catalog_matches(
 
     items = get_all_items_for_fuzzy()
     hits = exact_first_matches(items, q, model)
-    if hits:
+    # A most-words hit can merely be the cascade ignoring the misspelled word
+    # ("brak cable front" matching on cable+front). Give conservative typo
+    # correction a chance to produce a stronger exact/phrase/words result.
+    weak_hits = hits if hits and all(m.get("match_tier") == TIER_MOST for m in hits) else []
+    if hits and not weak_hits:
         return hits[:limit]
+    corrected = _correct_name_query_tokens(q)
+    if corrected:
+        hits = exact_first_matches(items, corrected, model)
+        # Do not promote a weak "all but one word" result into a confident typo
+        # correction; that tier is intentionally reserved for fuzzy fallback.
+        if hits and any(m.get("match_tier") != TIER_MOST for m in hits):
+            return hits[:limit]
+    if weak_hits:
+        return weak_hits[:limit]
     return _fuzzy_fallback_matches(q, model, limit)
 
 

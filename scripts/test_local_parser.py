@@ -28,8 +28,9 @@ CASES = {
     "bearing 6203": [(1, "bearing 6203")],
     # -> must defer to the LLM
     "teen air filter do basket": None,       # word-qty mid-sentence → LLM
-    "air filtre": None,                      # typo
-    "2 clach cable": None,                   # typo
+    # Clear catalog-grounded typo is now safe on the local fast path.
+    "air filtre": [(1, "air filtre")],
+    "2 clach cable": [(2, "clach cable")],   # clear catalog-grounded typo
     "chain kit 5": None,                     # trailing qty
     "chain kit 5 chain lock 6": None,        # trailing qtys
     "bearing 6203 qty 4": None,              # explicit qty word after
