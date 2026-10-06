@@ -47,4 +47,20 @@ CREATE TABLE IF NOT EXISTS import_log (
 );
 """
 
-ALL_TABLES = [ITEMS_TABLE, BILLS_TABLE, BILL_ITEMS_TABLE, IMPORT_LOG_TABLE]
+# Spoken STT phrase → catalog NAME family only (never a bike model / item_id).
+SPEECH_ALIASES_TABLE = """
+CREATE TABLE IF NOT EXISTS speech_aliases (
+    spoken_key      TEXT PRIMARY KEY,
+    catalog_name    TEXT NOT NULL,
+    confirm_count   INTEGER NOT NULL DEFAULT 1,
+    updated_at      TEXT DEFAULT (datetime('now'))
+);
+"""
+
+ALL_TABLES = [
+    ITEMS_TABLE,
+    BILLS_TABLE,
+    BILL_ITEMS_TABLE,
+    IMPORT_LOG_TABLE,
+    SPEECH_ALIASES_TABLE,
+]

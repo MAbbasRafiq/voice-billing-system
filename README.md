@@ -2,14 +2,14 @@
 
 Local voice-driven billing app for a motorcycle spare-parts shop. Speak a full order, resolve ambiguous part variants manually, apply FOC rules, preview the bill, then save and download a PDF.
 
-**Stack:** Python 3.11+ · FastAPI · SQLite · HTML + Tailwind CDN + vanilla JS · Web Speech API · optional Groq Whisper
+**Stack:** Python 3.11+ · FastAPI · SQLite · HTML + Tailwind CDN + vanilla JS · local Parakeet TDT (default) · optional browser voice
 
 ---
 
 ## Features
 
 - Voice or typed order → AI parse (Groq → Gemini → offline RapidFuzz)
-- Browser voice by default; optional persistent Groq Whisper mode for more accurate Urdu/mixed speech
+- **Local Parakeet** (default mic mode, fast CPU STT for English part names) or browser Web Speech as fallback
 - **Never auto-selects** a model variant when multiple matches exist
 - Disambiguation UI with multi-select and per-variant quantities
 - FOC (free-of-cost) lines on bill preview and PDF
@@ -60,8 +60,7 @@ GROQ_API_KEY=
 GEMINI_API_KEY=
 GEMINI_MODEL=gemini-2.5-flash-lite
 GROQ_MODEL=openai/gpt-oss-20b
-GROQ_WHISPER_MODEL=whisper-large-v3
-GROQ_WHISPER_TIMEOUT_SECONDS=30
+STT_MODEL=nemo-parakeet-tdt-0.6b-v3
 SHOP_NAME=Spare Parts Shop
 ```
 
@@ -116,9 +115,9 @@ Prints per-sheet import counts and a sample parse result.
 
 ## Typical workflow
 
-1. Choose Browser voice (default) or Groq Whisper, then click **Start Listening** (or type the order).
-   Prefer **English part names** with quantity in Urdu or English
-   (e.g. `دو air filter`, `teen chain kit`, `5 back light complete`).
+1. Choose **Local Parakeet** (default) or browser voice, then click **Start Listening** (or type the order).
+   Prefer **English part names** (quantity can be adjusted in the cart)
+   (e.g. `air filter`, `chain kit`, `back light complete`).
 2. Click **Stop Listening** — the order is matched automatically (no need to click Parse Text).
 3. Resolve ambiguous items (select variants + qty). Use **Remove** to skip a wrong line.
 4. Adjust cart quantities; FOC hints appear when thresholds are met
@@ -145,7 +144,7 @@ Prints per-sheet import counts and a sample parse result.
 | `GET`  | `/api/status`        | Active AI mode + import status            |
 
 
-Optional Whisper mode uploads one microphone recording to `POST /api/transcribe`;
+Local Parakeet uploads one microphone recording to `POST /api/transcribe` (runs on the server, no API key);
 the returned text then uses the same `/api/parse-order` flow as browser speech and typed input.
 
 AI mode chain: **Groq** (`openai/gpt-oss-20b`) → **Gemini** (`gemini-2.5-flash-lite`) → **RapidFuzz** offline.

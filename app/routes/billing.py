@@ -17,7 +17,8 @@ from app.database.queries import (
     update_bill_pdf,
 )
 from app.services.foc_calculator import calculate_foc
-from app.services.order_agent import resolve_order
+from app.database.queries import upsert_speech_alias
+from app.services.order_agent import resolve_order, spoken_alias_key
 from app.services.pdf_generator import generate_bill_pdf
 from app.services.speech_to_text import TranscriptionUnavailable, transcribe_audio
 
@@ -52,7 +53,7 @@ async def transcribe_route(
     lang = language if language in {"en", "ur"} else None
     filename = audio.filename or "recording.webm"
     try:
-        # Groq's SDK call is synchronous; keep it off the FastAPI event loop so
+        # Whisper inference is synchronous; keep it off the FastAPI event loop so
         # catalog search and billing requests remain responsive during upload.
         return await run_in_threadpool(transcribe_audio, data, filename, lang)
     except TranscriptionUnavailable as exc:
@@ -82,6 +83,35 @@ def parse_order_route(req: OrderRequest):
             preferred_unique.append(p)
 
     return resolve_order(req.text, preferred_models=preferred_unique)
+
+
+class SpeechAliasIn(BaseModel):
+    spoken: str
+    catalog_name: str
+
+
+@router.post("/speech-alias")
+def save_speech_alias(req: SpeechAliasIn):
+    """Remember spoken STT text → corrected query text (e.g. back ligt → back light).
+
+    Intended only for the no-match teach flow: when catalog matching returned
+    nothing and the user typed a correction. Do not call this after selecting
+    among existing matches (avoids locking a size/spec variant as the alias).
+
+    The stored value is not required to be an exact catalog row name; resolve_order
+    uses it as the corrected search/parse phrase.
+    """
+    key = spoken_alias_key(req.spoken)
+    corrected = (req.catalog_name or "").strip()
+    if not key:
+        raise HTTPException(status_code=400, detail="Spoken text is empty after normalization.")
+    if not corrected:
+        raise HTTPException(status_code=400, detail="Corrected text is required.")
+    try:
+        row = upsert_speech_alias(key, corrected)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True, "alias": row}
 
 
 class BillLineIn(BaseModel):

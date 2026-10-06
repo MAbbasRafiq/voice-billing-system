@@ -10,6 +10,7 @@ from pydantic import BaseModel
 
 from app.database.queries import count_items, get_latest_import
 from app.services.ai_parser import active_ai_mode, llm_status
+from app.services.speech_to_text import stt_model_name
 from app.services.excel_importer import EXCEL_PATH, import_all_sheets, needs_reimport
 
 router = APIRouter(prefix="/api")
@@ -51,6 +52,11 @@ def status():
         "needs_reimport": needs_reimport() if EXCEL_PATH.exists() else False,
         "last_import": latest,
         "shop_name": os.getenv("SHOP_NAME", "Spare Parts Shop"),
+        "stt": {
+            "engine": "parakeet",
+            "model": stt_model_name(),
+            "device": "cpu",
+        },
         "keys": {
             "groq": bool(os.getenv("GROQ_API_KEY")),
             "gemini": bool(os.getenv("GEMINI_API_KEY")),
@@ -59,7 +65,7 @@ def status():
         },
         "models": {
             "groq": os.getenv("GROQ_MODEL", "openai/gpt-oss-20b"),
-            "whisper": os.getenv("GROQ_WHISPER_MODEL", "whisper-large-v3"),
+            "whisper": stt_model_name(),
             "gemini": os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite"),
         },
     }

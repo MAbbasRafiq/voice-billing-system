@@ -1,19 +1,26 @@
 /**
- * Voice input: Browser Web Speech by default, optional Groq Whisper recording.
- * Both engines write the same transcript and enter the existing parse flow.
+ * Voice input: Local Parakeet (default) or browser Web Speech.
+ * Parakeet mode auto-stops after silence (VAD). Status line stays quiet when idle.
  */
 (function () {
   const micBtn = document.getElementById('mic-btn');
   const transcript = document.getElementById('transcript');
   const micState = document.getElementById('mic-state');
-  const langSelect = document.getElementById('speech-lang');
   const engineSelect = document.getElementById('speech-engine');
   if (!micBtn || !transcript) return;
 
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-  const LANG_KEY = 'billing_speech_lang';
   const ENGINE_KEY = 'billing_stt_engine';
-  const MAX_RECORDING_MS = 120000;
+  const SPEECH_LANG = 'en-PK';
+
+  // One short item utterance; hard cap as safety net.
+  const MAX_RECORDING_MS = 15000;
+  const VAD_SPEECH_LEVEL = 0.02;
+  const VAD_SILENCE_MS = 900;
+  const VAD_MIN_SPEECH_MS = 250;
+  const VAD_NO_SPEECH_MS = 5000;
+  const VAD_POLL_MS = 50;
+
   let listening = false;
   let recognition = null;
   let suppressParseOnEnd = false;
@@ -26,6 +33,15 @@
   let micSession = 0;
   let requestingMic = false;
 
+  let audioContext = null;
+  let analyser = null;
+  let vadSource = null;
+  let vadTimer = null;
+  let vadSpeechStarted = false;
+  let vadSpeechStartedAt = 0;
+  let vadLastLoudAt = 0;
+  let vadRecordingStartedAt = 0;
+
   function currentEngine() {
     return engineSelect ? engineSelect.value : 'browser';
   }
@@ -37,9 +53,8 @@
     return Boolean(SpeechRecognition);
   }
 
-  function currentLang() {
-    if (langSelect) return langSelect.value || 'en-PK';
-    return localStorage.getItem(LANG_KEY) || 'en-PK';
+  function setMicState(text) {
+    if (micState) micState.textContent = text || '';
   }
 
   function setButtonIdle() {
@@ -47,16 +62,14 @@
     micBtn.classList.remove('ring-4', 'ring-red-300', 'bg-red-600');
     micBtn.classList.add('bg-accent');
     micBtn.disabled = !engineSupported();
-    if (micState) {
-      const lang = currentLang() === 'ur-PK' ? 'Urdu' : 'English';
-      if (!engineSupported()) {
-        micState.textContent = currentEngine() === 'whisper'
+    if (!engineSupported()) {
+      setMicState(
+        currentEngine() === 'whisper'
           ? 'Audio recording is not supported — use Browser voice or type'
-          : 'Browser speech is not supported — try Groq Whisper or type';
-      } else {
-        const engine = currentEngine() === 'whisper' ? 'Whisper' : 'Browser';
-        micState.textContent = 'Ready (' + lang + ', ' + engine + ') — stop mic to auto-match';
-      }
+          : 'Browser speech is not supported — try Local Parakeet or type'
+      );
+    } else {
+      setMicState('');
     }
   }
 
@@ -65,11 +78,7 @@
     micBtn.textContent = 'Stop Listening';
     micBtn.classList.remove('bg-accent');
     micBtn.classList.add('ring-4', 'ring-red-300', 'bg-red-600');
-    if (micState) {
-      micState.textContent = currentEngine() === 'whisper'
-        ? 'Recording… click again to stop and transcribe'
-        : 'Listening… click again to stop';
-    }
+    setMicState('');
   }
 
   function maybeParseTranscript() {
@@ -85,9 +94,10 @@
 
   function createRecognition() {
     const rec = new SpeechRecognition();
-    rec.lang = currentLang();
+    rec.lang = SPEECH_LANG;
     rec.interimResults = true;
-    rec.continuous = true;
+    // One utterance then auto-end (browser silence / end-of-speech).
+    rec.continuous = false;
 
     rec.onresult = (event) => {
       let text = '';
@@ -100,20 +110,17 @@
     rec.onerror = (event) => {
       listening = false;
       setButtonIdle();
-      if (micState && event.error !== 'aborted') {
-        micState.textContent = 'Mic error — type instead';
+      if (event.error !== 'aborted') {
+        setMicState('Mic error — type instead');
       }
     };
 
     rec.onend = () => {
-      // If user still wants listening and browser stopped us, don't auto-restart
-      // (continuous can end on silence). Treat as stopped.
       if (!listening) {
         setButtonIdle();
         maybeParseTranscript();
         return;
       }
-      // Browser ended session while we thought we were listening — finalize
       listening = false;
       setButtonIdle();
       maybeParseTranscript();
@@ -152,9 +159,89 @@
     return choices.find((type) => MediaRecorder.isTypeSupported(type)) || '';
   }
 
+  function stopVadMonitor() {
+    if (vadTimer) {
+      clearInterval(vadTimer);
+      vadTimer = null;
+    }
+    try {
+      if (vadSource) vadSource.disconnect();
+    } catch (_) {}
+    vadSource = null;
+    analyser = null;
+    if (audioContext) {
+      try {
+        audioContext.close();
+      } catch (_) {}
+      audioContext = null;
+    }
+    vadSpeechStarted = false;
+    vadSpeechStartedAt = 0;
+    vadLastLoudAt = 0;
+    vadRecordingStartedAt = 0;
+  }
+
+  function rmsLevel(analyserNode) {
+    const buf = new Float32Array(analyserNode.fftSize);
+    analyserNode.getFloatTimeDomainData(buf);
+    let sum = 0;
+    for (let i = 0; i < buf.length; i++) {
+      const v = buf[i];
+      sum += v * v;
+    }
+    return Math.sqrt(sum / buf.length);
+  }
+
+  function startVadMonitor(stream) {
+    stopVadMonitor();
+    try {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return;
+      audioContext = new Ctx();
+      if (audioContext.state === 'suspended') {
+        audioContext.resume().catch(() => {});
+      }
+      analyser = audioContext.createAnalyser();
+      analyser.fftSize = 2048;
+      vadSource = audioContext.createMediaStreamSource(stream);
+      vadSource.connect(analyser);
+      vadRecordingStartedAt = Date.now();
+      vadSpeechStarted = false;
+      vadLastLoudAt = Date.now();
+
+      vadTimer = setInterval(() => {
+        if (!listening || !analyser || !recorder || recorder.state !== 'recording') return;
+        const level = rmsLevel(analyser);
+        const now = Date.now();
+        if (level >= VAD_SPEECH_LEVEL) {
+          if (!vadSpeechStarted) {
+            vadSpeechStarted = true;
+            vadSpeechStartedAt = now;
+          }
+          vadLastLoudAt = now;
+        }
+        if (
+          vadSpeechStarted &&
+          now - vadSpeechStartedAt >= VAD_MIN_SPEECH_MS &&
+          now - vadLastLoudAt >= VAD_SILENCE_MS
+        ) {
+          stopWhisper();
+          return;
+        }
+        if (!vadSpeechStarted && now - vadRecordingStartedAt >= VAD_NO_SPEECH_MS) {
+          stopWhisper({ quiet: true });
+          setMicState('No speech detected — try again');
+        }
+      }, VAD_POLL_MS);
+    } catch (_) {
+      stopVadMonitor();
+    }
+  }
+
   function releaseStream() {
     clearTimeout(recordingTimer);
     recordingTimer = null;
+    stopVadMonitor();
     if (mediaStream) mediaStream.getTracks().forEach((track) => track.stop());
     mediaStream = null;
   }
@@ -162,16 +249,16 @@
   async function uploadRecording(blob, extension) {
     if (!blob.size) {
       setButtonIdle();
-      if (micState) micState.textContent = 'No audio was recorded — please retry';
+      setMicState('No audio was recorded — please retry');
       return;
     }
     micBtn.disabled = true;
     micBtn.textContent = 'Transcribing…';
-    if (micState) micState.textContent = 'Uploading audio to Groq Whisper…';
+    setMicState('');
     uploadAbort = new AbortController();
     const form = new FormData();
     form.append('audio', blob, 'order.' + extension);
-    form.append('language', currentLang() === 'ur-PK' ? 'ur' : 'en');
+    form.append('language', 'en');
     try {
       const response = await fetch('/api/transcribe', {
         method: 'POST',
@@ -183,20 +270,19 @@
         data = await response.json();
       } catch (_) {}
       if (!response.ok) {
-        throw new Error(data.detail || 'Whisper transcription failed');
+        throw new Error(data.detail || 'Transcription failed');
       }
       transcript.value = (data.text || '').trim();
       setButtonIdle();
-      if (micState) micState.textContent = 'Transcript ready — matching order…';
       maybeParseTranscript();
     } catch (err) {
       setButtonIdle();
       if (err && err.name === 'AbortError') return;
-      if (micState) {
-        micState.textContent = (err && err.message)
+      setMicState(
+        (err && err.message)
           ? err.message
-          : 'Whisper failed — retry, use Browser voice, or type the order';
-      }
+          : 'Transcription failed — retry, use Browser voice, or type'
+      );
     } finally {
       uploadAbort = null;
     }
@@ -207,11 +293,10 @@
     const session = ++micSession;
     requestingMic = true;
     micBtn.disabled = true;
-    if (micState) micState.textContent = 'Requesting microphone permission…';
+    setMicState('');
     try {
       mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
       requestingMic = false;
-      // The user may switch engines while the permission prompt is open.
       if (session !== micSession || currentEngine() !== 'whisper') {
         releaseStream();
         setButtonIdle();
@@ -230,7 +315,7 @@
         listening = false;
         releaseStream();
         setButtonIdle();
-        if (micState) micState.textContent = 'Recording failed — retry or use Browser voice';
+        setMicState('Recording failed — retry or use Browser voice');
       };
       recorder.onstop = () => {
         const type = recorder && recorder.mimeType ? recorder.mimeType : 'audio/webm';
@@ -249,17 +334,18 @@
       recorder.start(250);
       listening = true;
       setButtonListening();
+      startVadMonitor(mediaStream);
       recordingTimer = setTimeout(() => stopWhisper(), MAX_RECORDING_MS);
     } catch (err) {
       requestingMic = false;
       listening = false;
       releaseStream();
       setButtonIdle();
-      if (micState) {
-        micState.textContent = err && err.name === 'NotAllowedError'
+      setMicState(
+        err && err.name === 'NotAllowedError'
           ? 'Microphone permission denied'
-          : 'Could not start recording — retry or use Browser voice';
-      }
+          : 'Could not start recording — retry or use Browser voice'
+      );
     }
   }
 
@@ -269,6 +355,7 @@
     listening = false;
     clearTimeout(recordingTimer);
     recordingTimer = null;
+    stopVadMonitor();
     if (recorder && recorder.state !== 'inactive') {
       recorder.stop();
     } else {
@@ -295,7 +382,6 @@
     }
   }
 
-  /** Stop mic without triggering parse (used by New bill). */
   window.stopMicListening = function stopMicListening() {
     if (uploadAbort) uploadAbort.abort();
     stop({ quiet: true });
@@ -305,19 +391,6 @@
     e.preventDefault();
     toggle();
   });
-
-  if (langSelect) {
-    const saved = localStorage.getItem(LANG_KEY);
-    if (saved) langSelect.value = saved;
-    langSelect.addEventListener('change', () => {
-      localStorage.setItem(LANG_KEY, langSelect.value);
-      if (listening) {
-        stop({ quiet: true });
-        // brief delay then restart in new language if they were mid-order
-      }
-      setButtonIdle();
-    });
-  }
 
   if (engineSelect) {
     const savedEngine = localStorage.getItem(ENGINE_KEY);

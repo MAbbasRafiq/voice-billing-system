@@ -9,3 +9,5 @@ reportlab
 jinja2
 python-multipart
 aiofiles
+onnx-asr[cpu,hub]
+av>=12,<16

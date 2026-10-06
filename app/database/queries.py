@@ -142,6 +142,32 @@ def get_all_items_for_fuzzy() -> list[dict]:
         return _ITEMS_CACHE
 
 
+def _catalog_filter_sql(
+    q: Optional[str] = None,
+    category: Optional[str] = None,
+    model: Optional[str] = None,
+) -> tuple[str, list[Any]]:
+    """Shared WHERE clause for catalog list + total count."""
+    clauses = ["1=1"]
+    params: list[Any] = []
+    # Every typed word must appear somewhere (name / Urdu / code / model), in any
+    # order: "filter air" and "air cd70" work, not just one exact substring.
+    for word in (q or "").split():
+        clauses.append(
+            "(name LIKE ? COLLATE NOCASE OR urdu_name LIKE ? "
+            "OR item_code LIKE ? COLLATE NOCASE OR model LIKE ? COLLATE NOCASE)"
+        )
+        like = f"%{word}%"
+        params.extend([like, like, like, like])
+    if category:
+        clauses.append("category = ?")
+        params.append(category)
+    if model:
+        clauses.append("model LIKE ? COLLATE NOCASE")
+        params.append(f"%{model}%")
+    return " AND ".join(clauses), params
+
+
 def catalog_items(
     q: Optional[str] = None,
     category: Optional[str] = None,
@@ -149,28 +175,26 @@ def catalog_items(
     limit: int = 200,
     offset: int = 0,
 ) -> list[dict]:
+    where, params = _catalog_filter_sql(q=q, category=category, model=model)
     conn = get_connection()
     try:
-        clauses = ["1=1"]
-        params: list[Any] = []
-        # Every typed word must appear somewhere (name / Urdu / code / model), in any
-        # order: "filter air" and "air cd70" work, not just one exact substring.
-        for word in (q or "").split():
-            clauses.append(
-                "(name LIKE ? COLLATE NOCASE OR urdu_name LIKE ? "
-                "OR item_code LIKE ? COLLATE NOCASE OR model LIKE ? COLLATE NOCASE)"
-            )
-            like = f"%{word}%"
-            params.extend([like, like, like, like])
-        if category:
-            clauses.append("category = ?")
-            params.append(category)
-        if model:
-            clauses.append("model LIKE ? COLLATE NOCASE")
-            params.append(f"%{model}%")
-        sql = f"SELECT * FROM items WHERE {' AND '.join(clauses)} ORDER BY name, model LIMIT ? OFFSET ?"
-        params.extend([limit, offset])
+        sql = f"SELECT * FROM items WHERE {where} ORDER BY name, model LIMIT ? OFFSET ?"
+        params = [*params, limit, offset]
         return [_row_to_dict(r) for r in conn.execute(sql, params).fetchall()]
+    finally:
+        conn.close()
+
+
+def count_catalog_items(
+    q: Optional[str] = None,
+    category: Optional[str] = None,
+    model: Optional[str] = None,
+) -> int:
+    where, params = _catalog_filter_sql(q=q, category=category, model=model)
+    conn = get_connection()
+    try:
+        row = conn.execute(f"SELECT COUNT(*) AS c FROM items WHERE {where}", params).fetchone()
+        return int(row["c"])
     finally:
         conn.close()
 
@@ -323,5 +347,74 @@ def get_latest_bill_id() -> Optional[int]:
         if not row:
             return None
         return int(row["id"] if hasattr(row, "keys") else row[0])
+    finally:
+        conn.close()
+
+
+def get_items_by_exact_name(name: str, limit: int = 200) -> list[dict]:
+    """All catalog rows that share this English name (every bike model)."""
+    name = (name or "").strip()
+    if not name:
+        return []
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            """
+            SELECT * FROM items
+            WHERE name = ? COLLATE NOCASE
+            ORDER BY model, item_code
+            LIMIT ?
+            """,
+            (name, limit),
+        ).fetchall()
+        return [_row_to_dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def get_speech_alias(spoken_key: str) -> Optional[str]:
+    """Return catalog_name for a normalized spoken key, or None."""
+    key = (spoken_key or "").strip().lower()
+    if not key:
+        return None
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            "SELECT catalog_name FROM speech_aliases WHERE spoken_key = ?",
+            (key,),
+        ).fetchone()
+        if not row:
+            return None
+        return (row["catalog_name"] or "").strip() or None
+    finally:
+        conn.close()
+
+
+def upsert_speech_alias(spoken_key: str, catalog_name: str) -> dict:
+    """Save spoken → catalog name family. Model / item_id are never stored."""
+    key = (spoken_key or "").strip().lower()
+    name = (catalog_name or "").strip()
+    if not key or not name:
+        raise ValueError("spoken_key and catalog_name are required")
+    conn = get_connection()
+    try:
+        conn.execute(
+            """
+            INSERT INTO speech_aliases (spoken_key, catalog_name, confirm_count, updated_at)
+            VALUES (?, ?, 1, datetime('now'))
+            ON CONFLICT(spoken_key) DO UPDATE SET
+              catalog_name = excluded.catalog_name,
+              confirm_count = speech_aliases.confirm_count + 1,
+              updated_at = datetime('now')
+            """,
+            (key, name),
+        )
+        conn.commit()
+        row = conn.execute(
+            "SELECT spoken_key, catalog_name, confirm_count, updated_at "
+            "FROM speech_aliases WHERE spoken_key = ?",
+            (key,),
+        ).fetchone()
+        return _row_to_dict(row)
     finally:
         conn.close()

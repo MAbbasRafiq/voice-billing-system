@@ -13,17 +13,10 @@
           Start Listening
         </button>
         <label class="text-sm flex items-center gap-2">
-          <span class="text-slate-600">Language</span>
-          <select id="speech-lang" class="rounded-lg border border-slate-300 px-2 py-2 bg-white text-sm">
-            <option value="en-PK">English (PK)</option>
-            <option value="ur-PK">Urdu (PK)</option>
-          </select>
-        </label>
-        <label class="text-sm flex items-center gap-2">
           <span class="text-slate-600">Voice</span>
           <select id="speech-engine" class="rounded-lg border border-slate-300 px-2 py-2 bg-white text-sm">
-            <option value="browser">Browser (fast)</option>
-            <option value="whisper">Groq Whisper</option>
+            <option value="browser">Browser (online STT)</option>
+            <option value="whisper" selected>Local Parakeet</option>
           </select>
         </label>
         <button id="parse-btn" type="button"
@@ -35,13 +28,13 @@
           title="Clear transcript, cart, and pending items">
           New bill
         </button>
-        <span id="mic-state" class="text-sm text-slate-500">Ready</span>
+        <span id="mic-state" class="text-sm text-slate-500"></span>
       </div>
 
       <label class="block text-sm font-medium mb-1" for="transcript">Transcript / typed order</label>
       <textarea id="transcript" rows="3"
         class="w-full rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-accent/40"
-        placeholder="e.g. دو air filter, teen chain kit, 5 back light complete"></textarea>
+        placeholder="e.g. air filter, chain kit, back light complete"></textarea>
       <p id="parse-notice" class="hidden mt-2 text-sm text-amber-800"></p>
 
       <div id="model-lock-bar"
@@ -127,6 +120,45 @@
     </div>
   </section>
 </div>
+  <!-- Teach unmatched speech: type correction → save alias on Enter → normal parse -->
+  <div id="teach-modal" class="fixed inset-0 z-50 hidden" aria-modal="true" role="dialog">
+    <div id="teach-modal-backdrop" class="absolute inset-0 bg-slate-900/45"></div>
+    <div class="relative z-10 mx-auto mt-10 w-[min(42rem,94vw)] max-h-[85vh] overflow-hidden rounded-xl bg-white shadow-xl border border-slate-200 flex flex-col">
+      <div class="px-4 py-3 border-b flex items-start justify-between gap-3 shrink-0">
+        <div>
+          <h2 class="font-semibold text-lg">No catalog match</h2>
+          <p class="text-sm text-slate-600 mt-0.5">
+            Heard: <strong id="teach-heard" class="text-ink"></strong>
+            — type to browse catalog · ↑↓ move · Enter pick / use text.
+          </p>
+        </div>
+        <button id="teach-close" type="button"
+          class="text-sm px-2 py-1 rounded border bg-white hover:bg-slate-50">Skip</button>
+      </div>
+      <div class="p-4 space-y-3 overflow-auto min-h-0">
+        <div class="flex gap-2 shrink-0">
+          <input id="teach-search" type="search"
+            placeholder="Search name, code, model…"
+            class="flex-1 rounded-lg border border-slate-300 px-3 py-2" autocomplete="off" />
+          <button id="teach-search-btn" type="button"
+            class="px-4 py-2 rounded-lg bg-slate-900 text-white">Use text</button>
+        </div>
+        <div class="overflow-auto max-h-[min(50vh,22rem)] border border-slate-200 rounded-lg">
+          <table class="min-w-full text-sm">
+            <thead class="bg-slate-900 text-white sticky top-0">
+              <tr>
+                <th class="text-left px-2 py-1.5 font-medium">Code</th>
+                <th class="text-left px-2 py-1.5 font-medium">Model</th>
+                <th class="text-left px-2 py-1.5 font-medium">Name</th>
+                <th class="text-right px-2 py-1.5 font-medium">CP</th>
+              </tr>
+            </thead>
+            <tbody id="teach-search-results"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
 {% endblock %}
 
 {% block scripts %}

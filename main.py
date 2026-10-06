@@ -65,6 +65,12 @@ def _warm_up() -> None:
         warm_up_llm()
     except Exception:
         pass
+    try:
+        from app.services.speech_to_text import warm_up_stt
+
+        warm_up_stt()
+    except Exception:
+        pass
 
 
 @app.get("/")

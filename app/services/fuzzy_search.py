@@ -8,7 +8,12 @@ from typing import Optional
 
 from rapidfuzz import fuzz, process, utils as rf_utils
 
-from app.database.queries import get_all_items_for_fuzzy, items_version, search_items_by_name
+from app.database.queries import (
+    catalog_items,
+    get_all_items_for_fuzzy,
+    items_version,
+    search_items_by_name,
+)
 
 # Common spoken quantity words (Urdu) → number
 URDU_QTY_WORDS = {
@@ -1020,6 +1025,35 @@ def _parenthetical_name_siblings(pool: list[dict], exact_rows: list[dict]) -> li
     return siblings
 
 
+def _dedupe_item_rows(rows: list[dict]) -> list[dict]:
+    """Preserve first occurrence; prefer id when present."""
+    out: list[dict] = []
+    seen: set = set()
+    for row in rows:
+        key = row.get("id")
+        if key is None:
+            key = id(row)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(row)
+    return out
+
+
+def _name_contains_all_query_tokens(name: str, tokens: list[str]) -> bool:
+    """True when every query token appears in the catalog name (catalog-LIKE style).
+
+    Matches whole-word extensions (``WHEEL CHAIN 420X104L``) and compound tokens
+    (``3WHEELER`` still contains ``wheel``), without requiring an exact name equality.
+    """
+    if not tokens:
+        return False
+    blob = _norm_text(name or "")
+    if not blob:
+        return False
+    return all(tok in blob for tok in tokens)
+
+
 def exact_first_matches(
     items: list[dict],
     query: str,
@@ -1053,25 +1087,38 @@ def exact_first_matches(
     model_hint = _name_tokens(model or "") or model_from_text
 
     def run(pool: list[dict]) -> list[dict]:
-        # 2) Full catalog name equals the request
         want = tuple(tokens)
         named = [(i, _name_tokens_t(i.get("name") or "")) for i in pool]
+        # 2) Full catalog name equals the request
         exact = [i for i, nt in named if nt == want]
-        if exact:
-            # Keep parenthetical siblings so the shop can choose (LEED vs LEED (MB100)).
-            family = exact + _parenthetical_name_siblings(pool, exact)
-            return _cascade_rank(family, tokens, TIER_EXACT)
-
         # 3) Request is a contiguous phrase inside the name (chain kit → … CHAIN KIT …)
         phrase = [i for i, nt in named if _contains_seq(nt, tokens) >= 0]
-        if phrase:
-            return _cascade_rank(phrase, tokens, TIER_PHRASE)
-
         # 4) Every word present, any order, whole words only
         tset = set(tokens)
         words = [i for i, nt in named if tset.issubset(nt)]
-        if words:
-            return _cascade_rank(words, tokens, TIER_WORDS)
+
+        # Do not stop at exact-only: also keep every name that still contains
+        # all query words (``WHEEL CHAIN`` + ``WHEEL CHAIN 420X104L``, etc.).
+        strong = exact or phrase or words
+        if strong:
+            family = list(exact) + list(phrase) + list(words)
+            if exact:
+                family.extend(_parenthetical_name_siblings(pool, exact))
+            # Catalog-style expand: each query token substring-present in name
+            # (picks up compounds like 3WHEELER for "wheel").
+            family.extend(
+                i
+                for i, _nt in named
+                if _name_contains_all_query_tokens(i.get("name") or "", tokens)
+            )
+            family = _dedupe_item_rows(family)
+            if exact:
+                tier = TIER_EXACT
+            elif phrase:
+                tier = TIER_PHRASE
+            else:
+                tier = TIER_WORDS
+            return _cascade_rank(family, tokens, tier)
 
         # 5) All but one word (only for 3+ word requests; guards stray LLM words)
         if len(tokens) >= 3:
@@ -1505,6 +1552,75 @@ def search_catalog(
         yes.sort(key=rank)  # stable: keeps relevance order inside a model
         results = yes + no
     return results[:limit]
+
+
+def browse_catalog_hybrid(
+    q: str,
+    *,
+    category: Optional[str] = None,
+    preferred_model: Optional[str] = None,
+    limit: int = 200,
+    offset: int = 0,
+) -> tuple[list[dict], int]:
+    """Catalog page search: strong prefix hits first, broad LIKE hits after.
+
+    Top block uses ``search_catalog`` relevance (so ``handle t on`` → HANDLE T ONLY).
+    Remaining SQL LIKE matches that the prefix engine dropped (e.g. HANDLE CONE
+    for a short ``on`` token) are appended at the end so nothing disappears —
+    they just rank lower.
+    """
+    query = (q or "").strip()
+    if not query:
+        return [], 0
+
+    ranked = search_catalog(
+        query,
+        limit=1000,
+        preferred_model=preferred_model,
+    )
+    # Broad pool (alphabetical SQL LIKE) — same filter words as before.
+    like_rows = catalog_items(
+        q=query,
+        category=None,
+        model=None,
+        limit=5000,
+        offset=0,
+    )
+
+    cat = (category or "").strip()
+    if cat:
+        ranked = [r for r in ranked if (r.get("category") or "") == cat]
+        like_rows = [r for r in like_rows if (r.get("category") or "") == cat]
+
+    seen: set = set()
+    merged: list[dict] = []
+    for row in ranked:
+        rid = row.get("id")
+        if rid is None or rid in seen:
+            continue
+        seen.add(rid)
+        merged.append(row)
+
+    # Trailing LIKE-only hits: keep A→Z within this weaker band.
+    like_only: list[dict] = []
+    for row in like_rows:
+        rid = row.get("id")
+        if rid is None or rid in seen:
+            continue
+        seen.add(rid)
+        weak = dict(row)
+        weak["score"] = float(weak.get("score") or 0)
+        like_only.append(weak)
+    like_only.sort(
+        key=lambda r: (
+            (r.get("name") or "").lower(),
+            (r.get("model") or "").lower(),
+        )
+    )
+    merged.extend(like_only)
+
+    total = len(merged)
+    return merged[offset : offset + limit], total
 
 
 def _extract_qty_phrases(text: str) -> list[tuple[int, str]]:

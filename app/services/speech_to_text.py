@@ -1,99 +1,134 @@
-"""Optional Groq Whisper speech-to-text.
+"""Local NVIDIA Parakeet TDT speech-to-text (ONNX / CPU).
 
-This module is deliberately independent from the order parser: it only turns
-audio into text, which then enters the existing parse-order flow.
+Independent from the order parser: audio → text, then the existing parse-order flow.
+Optimized for short English part-name utterances (quantity can be set in the UI).
 """
 
 from __future__ import annotations
 
 import os
-from functools import lru_cache
+import tempfile
+import threading
+from pathlib import Path
 
-from groq import Groq
+import numpy as np
 
-from app.database.queries import get_all_items_for_fuzzy, items_version
+DEFAULT_STT_MODEL = "nemo-parakeet-tdt-0.6b-v3"
+DEFAULT_SAMPLE_RATE = 16000
 
-
-DEFAULT_WHISPER_MODEL = "whisper-large-v3"
-# Groq Whisper rejects prompts longer than this (API: 896).
-MAX_WHISPER_PROMPT_CHARS = 896
-
-_BASE_PROMPT = (
-    "Pakistani motorcycle spare-parts order. "
-    "Part names in English catalog form "
-    "(air filter, chain kit, back light complete, bearing, cdi unit). "
-    "Quantities may be Urdu, English, Roman, or digits "
-    "(دو, teen, 2). "
-    "Preserve quantities, English names, models (CD70, CG125)."
-)
+_model = None
+_model_lock = threading.Lock()
 
 
 class TranscriptionUnavailable(RuntimeError):
     """Raised for a configuration or provider failure safe to show to the UI."""
 
 
-@lru_cache(maxsize=4)
-def _catalog_hotwords(version: int, budget: int) -> str:
-    """Short list of frequent English catalog names + models for Whisper bias."""
-    del version  # cache key only
-    if budget < 40:
-        return ""
-
-    items = get_all_items_for_fuzzy()
-    name_counts: dict[str, int] = {}
-    models: set[str] = set()
-    for it in items:
-        name = (it.get("name") or "").strip()
-        if name and name != "-":
-            stem = name.split("(")[0].strip()
-            if 2 <= len(stem) <= 40:
-                name_counts[stem] = name_counts.get(stem, 0) + 1
-        model = (it.get("model") or "").strip()
-        if model and any(c.isdigit() for c in model):
-            models.add(model.split()[0][:24])
-
-    top_names = sorted(name_counts, key=lambda n: (-name_counts[n], n))
-    top_models = sorted(models)
-
-    parts: list[str] = []
-    prefix = "Parts: "
-    used = len(prefix)
-    for name in top_names:
-        piece = (", " if parts else "") + name
-        if used + len(piece) > budget // 2:
-            break
-        parts.append(name)
-        used += len(piece)
-
-    model_bits: list[str] = []
-    mprefix = " Models: "
-    mused = len(mprefix)
-    model_budget = budget - used - len(mprefix) - 1
-    for model in top_models:
-        piece = (", " if model_bits else "") + model
-        if mused + len(piece) > max(0, model_budget):
-            break
-        model_bits.append(model)
-        mused += len(piece)
-
-    out = ""
-    if parts:
-        out += prefix + ", ".join(parts) + "."
-    if model_bits:
-        out += mprefix + ", ".join(model_bits) + "."
-    return out[:budget]
+def stt_model_name() -> str:
+    return (
+        os.getenv("STT_MODEL", "").strip()
+        or os.getenv("PARAKEET_MODEL", "").strip()
+        or DEFAULT_STT_MODEL
+    )
 
 
-def _whisper_prompt() -> str:
-    base = _BASE_PROMPT
-    budget = MAX_WHISPER_PROMPT_CHARS - len(base) - 1
+# Back-compat for settings / status callers.
+def whisper_model_name() -> str:
+    return stt_model_name()
+
+
+def _get_parakeet_model():
+    """Load Parakeet ONNX once per process."""
+    global _model
+    if _model is not None:
+        return _model
+    with _model_lock:
+        if _model is not None:
+            return _model
+        try:
+            import onnx_asr
+        except ImportError as exc:
+            raise TranscriptionUnavailable(
+                "Local speech model is not installed. Run: pip install \"onnx-asr[cpu,hub]\""
+            ) from exc
+
+        name = stt_model_name()
+        try:
+            _model = onnx_asr.load_model(name)
+        except Exception as exc:
+            raise TranscriptionUnavailable(
+                "Could not load Parakeet. Check STT_MODEL and that the model is cached."
+            ) from exc
+        return _model
+
+
+def warm_up_stt() -> None:
+    """Pre-load Parakeet on server startup so the first recording is faster."""
     try:
-        hot = _catalog_hotwords(items_version(), max(0, budget))
-    except Exception:
-        hot = ""
-    if hot:
-        return f"{base} {hot}"[:MAX_WHISPER_PROMPT_CHARS]
-    return base[:MAX_WHISPER_PROMPT_CHARS]
+        _get_parakeet_model()
+    except TranscriptionUnavailable:
+        pass
+
+
+def warm_up_whisper() -> None:
+    """Alias kept for existing startup hooks."""
+    warm_up_stt()
+
+
+def _suffix_from_filename(filename: str) -> str:
+    suffix = Path(filename or "recording.webm").suffix.lower()
+    if suffix in {".webm", ".ogg", ".wav", ".mp3", ".mp4", ".m4a", ".opus"}:
+        return suffix
+    return ".webm"
+
+
+def _decode_mono_16k(path: str) -> np.ndarray:
+    """Decode any supported container to float32 mono @ 16 kHz for Parakeet."""
+    try:
+        import av
+    except ImportError as exc:
+        raise TranscriptionUnavailable(
+            "Audio decoder missing. Run: pip install \"av>=12,<16\""
+        ) from exc
+
+    resampler = av.audio.resampler.AudioResampler(
+        format="flt",
+        layout="mono",
+        rate=DEFAULT_SAMPLE_RATE,
+    )
+    chunks: list[np.ndarray] = []
+    try:
+        with av.open(path, mode="r") as container:
+            if not container.streams.audio:
+                return np.zeros(0, dtype=np.float32)
+            for frame in container.decode(audio=0):
+                for out in resampler.resample(frame):
+                    arr = out.to_ndarray().reshape(-1)
+                    if arr.size:
+                        chunks.append(arr.astype(np.float32, copy=False))
+            for out in resampler.resample(None):
+                arr = out.to_ndarray().reshape(-1)
+                if arr.size:
+                    chunks.append(arr.astype(np.float32, copy=False))
+    except Exception as exc:
+        raise TranscriptionUnavailable(
+            "Could not decode the recording. Retry or use a different format."
+        ) from exc
+
+    if not chunks:
+        return np.zeros(0, dtype=np.float32)
+    return np.concatenate(chunks)
+
+
+def _result_text(result) -> str:
+    if result is None:
+        return ""
+    if isinstance(result, str):
+        return result.strip()
+    text = getattr(result, "text", None)
+    if isinstance(text, str):
+        return text.strip()
+    return str(result).strip()
 
 
 def transcribe_audio(
@@ -101,45 +136,38 @@ def transcribe_audio(
     filename: str,
     language: str | None = None,
 ) -> dict[str, str]:
-    key = os.getenv("GROQ_API_KEY", "").strip()
-    if not key:
-        raise TranscriptionUnavailable(
-            "Groq API key is not configured. Add it in Settings or use Browser voice."
-        )
+    del language  # Parakeet auto-detects; shop voice is English part names
     if not audio:
         raise TranscriptionUnavailable("No audio was received.")
 
-    model = os.getenv("GROQ_WHISPER_MODEL", DEFAULT_WHISPER_MODEL).strip()
-    client = Groq(
-        api_key=key,
-        timeout=float(os.getenv("GROQ_WHISPER_TIMEOUT_SECONDS", "30")),
-    )
-    kwargs = {
-        "file": (filename, audio),
-        "model": model,
-        "response_format": "json",
-        "temperature": 0.0,
-        "prompt": _whisper_prompt(),
-    }
-    if language in {"en", "ur"}:
-        kwargs["language"] = language
-
+    model_name = stt_model_name()
+    model = _get_parakeet_model()
+    suffix = _suffix_from_filename(filename)
+    tmp_path: str | None = None
     try:
-        result = client.audio.transcriptions.create(**kwargs)
-    except Exception as exc:
-        # Do not expose provider internals or the API key to the browser.
-        status = getattr(exc, "status_code", None)
-        if status == 429:
-            message = "Whisper rate limit reached. Retry shortly or use Browser voice."
-        elif status in {401, 403}:
-            message = "Groq rejected the API key. Check it in Settings."
-        elif status == 400:
-            message = "Whisper rejected the recording. Retry or use Browser voice."
-        else:
-            message = "Whisper transcription failed. Retry or use Browser voice."
-        raise TranscriptionUnavailable(message) from exc
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+            tmp.write(audio)
+            tmp_path = tmp.name
 
-    text = (getattr(result, "text", "") or "").strip()
+        waveform = _decode_mono_16k(tmp_path)
+        if waveform.size == 0:
+            raise TranscriptionUnavailable("No speech was detected in the recording.")
+
+        result = model.recognize(waveform, sample_rate=DEFAULT_SAMPLE_RATE)
+        text = _result_text(result)
+    except TranscriptionUnavailable:
+        raise
+    except Exception as exc:
+        raise TranscriptionUnavailable(
+            "Local transcription failed. Retry or type the order."
+        ) from exc
+    finally:
+        if tmp_path:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+
     if not text:
         raise TranscriptionUnavailable("No speech was detected in the recording.")
-    return {"text": text, "model": model}
+    return {"text": text, "model": model_name}

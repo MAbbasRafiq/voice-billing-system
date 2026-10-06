@@ -700,17 +700,279 @@
     confirmBtn.disabled = !(resolvable.length && allResolvablePicked);
   }
 
+  // Alias learning is ONLY allowed from the no-match teach modal.
+  // If any catalog match already exists (auto-add or ambiguous), do not save.
+  function saveSpeechAlias(spoken, catalogName) {
+    const spokenText = (spoken || '').trim();
+    const name = (catalogName || '').trim();
+    if (!spokenText || !name) return Promise.resolve();
+    return fetch('/api/speech-alias', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ spoken: spokenText, catalog_name: name }),
+    }).catch(() => {});
+  }
+
+  // ---- Teach unmatched speech: type correction → save alias NOW → parseOrder ----
+  const teachState = { spoken: '', focusIdx: -1, items: [] };
+  let teachApplying = false;
+  let teachSearchSeq = 0;
+  let teachSearchAbort = null;
+  let teachSearchTimer = null;
+  const TEACH_CATALOG_MIN_CHARS = 1;
+
+  function teachResultRows() {
+    return Array.from(
+      document.querySelectorAll('#teach-search-results [data-teach-pick-idx]')
+    );
+  }
+
+  function setTeachFocus(idx) {
+    const rows = teachResultRows();
+    if (!rows.length) {
+      teachState.focusIdx = -1;
+      return;
+    }
+    const next = Math.max(0, Math.min(rows.length - 1, idx));
+    teachState.focusIdx = next;
+    rows.forEach((row, i) => {
+      const on = i === next;
+      row.classList.toggle('bg-teal-100', on);
+      row.classList.toggle('ring-2', on);
+      row.classList.toggle('ring-inset', on);
+      row.classList.toggle('ring-teal-600', on);
+      if (on) row.setAttribute('aria-selected', 'true');
+      else row.removeAttribute('aria-selected');
+    });
+    rows[next].scrollIntoView({ block: 'nearest' });
+  }
+
+  function moveTeachFocus(delta) {
+    const rows = teachResultRows();
+    if (!rows.length) return;
+    let next = teachState.focusIdx;
+    if (next < 0) next = delta > 0 ? 0 : rows.length - 1;
+    else next += delta;
+    setTeachFocus(next);
+  }
+
+  function pickTeachFocusedOrTyped() {
+    const items = teachState.items || [];
+    const idx = teachState.focusIdx;
+    if (idx >= 0 && items[idx] && items[idx].name) {
+      const input = document.getElementById('teach-search');
+      if (input) input.value = items[idx].name;
+      applyTeachCorrection(items[idx].name);
+      return;
+    }
+    applyTeachCorrection();
+  }
+
+  function closeTeachModal() {
+    const modal = document.getElementById('teach-modal');
+    if (modal) modal.classList.add('hidden');
+    teachState.spoken = '';
+    teachState.focusIdx = -1;
+    teachState.items = [];
+    const search = document.getElementById('teach-search');
+    if (search) search.value = '';
+    const tbody = document.getElementById('teach-search-results');
+    if (tbody) tbody.innerHTML = '';
+    if (teachSearchAbort) teachSearchAbort.abort();
+    clearTimeout(teachSearchTimer);
+  }
+
+  function openTeachModal(spoken) {
+    const text = (spoken || '').trim();
+    if (text.length < 1) return;
+    teachState.spoken = text;
+    teachState.focusIdx = -1;
+    teachState.items = [];
+    const heard = document.getElementById('teach-heard');
+    if (heard) heard.textContent = text;
+    const search = document.getElementById('teach-search');
+    if (search) search.value = '';
+    const tbody = document.getElementById('teach-search-results');
+    if (tbody) tbody.innerHTML = '';
+    const modal = document.getElementById('teach-modal');
+    if (modal) modal.classList.remove('hidden');
+    if (search) setTimeout(() => search.focus(), 30);
+  }
+
+  async function runTeachCatalogSearch() {
+    const input = document.getElementById('teach-search');
+    const tbody = document.getElementById('teach-search-results');
+    if (!input || !tbody) return;
+    const q = (input.value || '').trim();
+    const seq = ++teachSearchSeq;
+    if (teachSearchAbort) teachSearchAbort.abort();
+    teachState.focusIdx = -1;
+    teachState.items = [];
+    if (q.length < TEACH_CATALOG_MIN_CHARS) {
+      tbody.innerHTML = q
+        ? '<tr><td colspan="4" class="px-2 py-2 text-slate-400">Keep typing…</td></tr>'
+        : '';
+      return;
+    }
+    const params = new URLSearchParams({ q, limit: '80' });
+    if (state.preferredModels.length) {
+      params.set('model', state.preferredModels[0]);
+    }
+    teachSearchAbort = new AbortController();
+    let data;
+    try {
+      const res = await fetch('/api/catalog?' + params.toString(), {
+        signal: teachSearchAbort.signal,
+      });
+      data = await res.json();
+    } catch (err) {
+      if (err && err.name === 'AbortError') return;
+      if (seq === teachSearchSeq) {
+        tbody.innerHTML =
+          '<tr><td colspan="4" class="px-2 py-2 text-red-600">Search failed — retry.</td></tr>';
+      }
+      return;
+    }
+    if (seq !== teachSearchSeq) return;
+    const items = data.items || [];
+    teachState.items = items;
+    if (!items.length) {
+      tbody.innerHTML =
+        '<tr><td colspan="4" class="px-2 py-2 text-slate-500">No results</td></tr>';
+      return;
+    }
+    tbody.innerHTML = items
+      .map((it, i) => {
+        const preferred = isPreferredModel(it.model);
+        return `
+      <tr class="border-b border-slate-100 hover:bg-teal-50 cursor-pointer ${preferred ? 'bg-teal-50/40' : ''}"
+        data-teach-pick-idx="${i}" role="option">
+        <td class="px-2 py-1.5 font-mono text-xs">${it.item_code || ''}</td>
+        <td class="px-2 py-1.5">${it.model || ''}${preferred ? ' <span class="text-xs text-teal-700">· preferred</span>' : ''}</td>
+        <td class="px-2 py-1.5">${it.name || ''}</td>
+        <td class="px-2 py-1.5 text-right">${money(it.cp)}</td>
+      </tr>`;
+      })
+      .join('');
+
+    tbody.querySelectorAll('[data-teach-pick-idx]').forEach((row) => {
+      const pick = () => {
+        const it = items[Number(row.getAttribute('data-teach-pick-idx'))];
+        if (!it || !it.name) return;
+        input.value = it.name;
+        applyTeachCorrection(it.name);
+      };
+      row.addEventListener('click', pick);
+      row.addEventListener('mouseenter', () => {
+        setTeachFocus(Number(row.getAttribute('data-teach-pick-idx')));
+      });
+    });
+  }
+
+  async function applyTeachCorrection(typedOverride) {
+    if (teachApplying) return;
+    const input = document.getElementById('teach-search');
+    const typed = (
+      typedOverride != null ? String(typedOverride) : (input && input.value) || ''
+    ).trim();
+    if (!typed) return;
+    const heard = (teachState.spoken || '').trim();
+    if (!heard) return;
+
+    teachApplying = true;
+    try {
+      await saveSpeechAlias(heard, typed);
+      const transcript = document.getElementById('transcript');
+      if (transcript) transcript.value = typed;
+      const notice = document.getElementById('parse-notice');
+      if (notice) {
+        notice.textContent = 'Saved “' + heard + '” → “' + typed + '”';
+        notice.classList.remove('hidden');
+      }
+      closeTeachModal();
+      // Continue exactly as if the user had spoken/typed the correction.
+      await parseOrder(typed);
+    } finally {
+      teachApplying = false;
+    }
+  }
+
+  function maybeOpenTeachFromParse(data, spokenText) {
+    const spoken = (spokenText || '').trim();
+    if (spoken.length < 1) return;
+    const resolvable = (data.items || []).filter(
+      (g) =>
+        g &&
+        g.action !== 'ignored' &&
+        Array.isArray(g.matches) &&
+        g.matches.length > 0
+    );
+    if (resolvable.length) return;
+    openTeachModal(spoken);
+  }
+
+  function wireTeachModal() {
+    const closeBtn = document.getElementById('teach-close');
+    const backdrop = document.getElementById('teach-modal-backdrop');
+    const searchBtn = document.getElementById('teach-search-btn');
+    const searchInput = document.getElementById('teach-search');
+    if (closeBtn) closeBtn.addEventListener('click', closeTeachModal);
+    if (backdrop) backdrop.addEventListener('click', closeTeachModal);
+    if (searchBtn) {
+      searchBtn.addEventListener('click', () => pickTeachFocusedOrTyped());
+    }
+    if (searchInput) {
+      searchInput.addEventListener('input', () => {
+        clearTimeout(teachSearchTimer);
+        teachSearchTimer = setTimeout(runTeachCatalogSearch, 150);
+      });
+      searchInput.addEventListener('keydown', (e) => {
+        if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          moveTeachFocus(1);
+        } else if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          moveTeachFocus(-1);
+        } else if (e.key === 'Enter') {
+          e.preventDefault();
+          clearTimeout(teachSearchTimer);
+          pickTeachFocusedOrTyped();
+        } else if (e.key === 'Escape') {
+          closeTeachModal();
+        }
+      });
+    }
+    document.addEventListener('keydown', (e) => {
+      const modal = document.getElementById('teach-modal');
+      if (!modal || modal.classList.contains('hidden')) return;
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        closeTeachModal();
+        return;
+      }
+      // Arrows work even if focus left the search box (e.g. after click).
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        const tag = (e.target && e.target.tagName) || '';
+        if (tag === 'INPUT' || tag === 'TEXTAREA') return; // handled on input
+        e.preventDefault();
+        moveTeachFocus(e.key === 'ArrowDown' ? 1 : -1);
+      }
+    });
+  }
+
   function confirmResolved() {
     state.pending.forEach((group) => {
       if (group.resolved || group.skipped) return;
       if (!group.selected || !Object.keys(group.selected).length) return;
       if (!(group.matches || []).length) return;
+      let confirmedName = '';
       Object.entries(group.selected).forEach(([idStr, meta]) => {
         const id = Number(idStr);
         const match = group.matches.find((m) => m.id === id);
         if (match) {
           addToCart(match, meta.qty || group.qty || 1, { remember: true });
           rememberVariant(group.item || match.name, match.model, match.id);
+          if (!confirmedName) confirmedName = match.name || group.item || '';
         }
       });
       group.resolved = true;
@@ -829,6 +1091,7 @@
       state.focus.matchIndex = 0;
     }
     renderDisambiguation();
+    maybeOpenTeachFromParse(data, text);
     } finally {
       if (parseBtn) {
         parseBtn.disabled = false;
@@ -890,6 +1153,7 @@
     if (manualSearch) manualSearch.value = '';
     const manualResults = document.getElementById('manual-results');
     if (manualResults) manualResults.innerHTML = '';
+    closeTeachModal();
 
     const previewPanel = document.getElementById('bill-preview');
     if (previewPanel) previewPanel.classList.add('hidden');
@@ -1054,6 +1318,9 @@
   document.addEventListener(
     'keydown',
     (e) => {
+      const teachModal = document.getElementById('teach-modal');
+      if (teachModal && !teachModal.classList.contains('hidden')) return;
+
       const panel = document.getElementById('disambiguation');
       if (!panel || panel.classList.contains('hidden')) return;
 
@@ -1199,6 +1466,7 @@
   const clearLockBtn = document.getElementById('model-lock-clear');
   if (clearLockBtn) clearLockBtn.addEventListener('click', clearPreferredModels);
 
+  wireTeachModal();
   renderModelLock();
   renderCart();
 })();

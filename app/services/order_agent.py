@@ -9,6 +9,7 @@ from __future__ import annotations
 import re
 from typing import Any, Optional
 
+from app.database.queries import get_items_by_exact_name, get_speech_alias
 from app.services.ai_parser import parse_order, pick_catalog_names_batch
 from app.services.local_parser import local_parse
 from app.services.fuzzy_search import (
@@ -25,8 +26,69 @@ from app.services.fuzzy_search import (
     EXACT_TIERS,
     leading_qty_hint,
     qty_before_phrase,
+    strip_leading_qty,
     is_model_only_query,
 )
+
+
+def spoken_alias_key(text: str) -> str:
+    """Normalize spoken/STT text for alias lookup (qty stripped, lowercased)."""
+    raw = normalize_transcript(text or "")
+    _qty, rest = strip_leading_qty(raw)
+    key = (rest or raw or "").strip().lower()
+    key = re.sub(r"[^\w\s\u0600-\u06ff]+", " ", key, flags=re.UNICODE)
+    return re.sub(r"\s+", " ", key).strip()
+
+
+def _rows_as_matches(rows: list[dict], *, score: float, tier: str) -> list[dict]:
+    out: list[dict] = []
+    for row in rows:
+        m = dict(row)
+        m["score"] = float(score)
+        m["match_tier"] = tier
+        out.append(m)
+    return out
+
+
+def _expand_all_models_for_name(
+    matches: list[dict],
+    preferred_models: Optional[list[str]],
+    name: Optional[str] = None,
+) -> list[dict]:
+    """When one catalog name family is chosen, return every model row for that name."""
+    if name:
+        canonical = name.strip()
+    else:
+        names = _names_by_score(matches)
+        if len(names) != 1:
+            return matches
+        canonical = names[0]
+    if not canonical:
+        return matches
+
+    full = get_items_by_exact_name(canonical)
+    if not full:
+        return matches
+
+    score_by_id = {m.get("id"): float(m.get("score") or 100) for m in matches}
+    expanded = []
+    for row in full:
+        m = dict(row)
+        m["score"] = score_by_id.get(m.get("id"), 100.0)
+        m["match_tier"] = "name_family"
+        expanded.append(m)
+    return _prefer_models(expanded, preferred_models)
+
+
+def _lookup_alias_name(*candidates: str) -> Optional[str]:
+    for raw in candidates:
+        key = spoken_alias_key(raw or "")
+        if not key:
+            continue
+        name = get_speech_alias(key)
+        if name:
+            return name
+    return None
 
 
 def _prefer_models(matches: list[dict], preferred: Optional[list[str]]) -> list[dict]:
@@ -316,22 +378,44 @@ def resolve_order(
             qty = said
         qty = max(1, min(qty, 99999))
 
-        mkey = (query.lower(), (spoken_model or "").lower(), spoken.lower())
+        alias_name = _lookup_alias_name(
+            spoken,
+            query,
+            text if len(lines) == 1 else "",
+        )
+        via_alias = bool(alias_name)
+        if via_alias:
+            # Alias stores corrected phrase (e.g. "back light"), not necessarily
+            # an exact catalog row name — resolve it like a normal typed query.
+            query = alias_name
+
+        mkey = (
+            "alias" if via_alias else "fuzzy",
+            query.lower(),
+            (spoken_model or "").lower() if not via_alias else "",
+            spoken.lower(),
+        )
         if mkey in match_memo:
             matches = list(match_memo[mkey])
         else:
-            matches = find_catalog_matches(query, spoken_model)
-            if not matches and spoken and spoken != query:
+            matches = find_catalog_matches(
+                query, spoken_model if not via_alias else None
+            )
+            if not matches and spoken and spoken != query and not via_alias:
                 matches = find_catalog_matches(
                     reconcile_item_with_spoken(spoken, spoken), spoken_model
                 )
+            if not matches and via_alias:
+                matches = find_catalog_matches(query, None)
             matches = rerank_by_query_tokens(matches, query)
+            # Fuzzy-only hits (no exact tier) for text unrelated to the catalog = noise
+            if matches and not any(m.get("match_tier") for m in matches):
+                if rescued or not transcript_matches_catalog(f"{spoken} {query}"):
+                    # Alias-corrected queries are trusted — keep fuzzy hits.
+                    if not via_alias:
+                        matches = []
+            matches = _prefer_models(matches, preferred_models)
             match_memo[mkey] = list(matches)
-        # Fuzzy-only hits (no exact tier) for text unrelated to the catalog = noise
-        if matches and not any(m.get("match_tier") for m in matches):
-            if rescued or not transcript_matches_catalog(f"{spoken} {query}"):
-                matches = []
-        matches = _prefer_models(matches, preferred_models)
 
         row = {
             "line": line,
@@ -341,6 +425,7 @@ def resolve_order(
             "qty": qty,
             "matches": matches,
             "picked_name": None,
+            "via_alias": via_alias,
         }
         prepared.append(row)
 
@@ -374,12 +459,18 @@ def resolve_order(
             matches = _filter_matches_to_name(matches, picked_name)
             llm_narrowed = before_names > 1
             query = picked_name
+            matches = _expand_all_models_for_name(
+                matches, preferred_models, name=query
+            )
         else:
             # Local narrow when we skipped LLM or pick failed
             matches = _narrow_to_best_name(matches, query)
             names = _names_by_score(matches)
             if len(names) == 1:
                 query = names[0]
+                matches = _expand_all_models_for_name(
+                    matches, preferred_models, name=query
+                )
 
         action = _decide_action(line, matches, query)
         # An LLM guess between several part families is never auto-added:
