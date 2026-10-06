@@ -189,16 +189,8 @@
     return n;
   }
 
-  function qtyChipsHtml(attrs, ctnQty, currentQty) {
-    const ctn = ctnLabel(ctnQty);
-    let html = `
-      <button type="button" class="qty-chip" data-qty-delta="1" ${attrs}>+1</button>
-      <button type="button" class="qty-chip" data-qty-delta="10" ${attrs}>+10</button>`;
-    if (ctn) {
-      html += `<button type="button" class="qty-chip" data-qty-set="${ctn}" ${attrs} title="1 carton">+${ctn} ctn</button>`;
-      html += `<button type="button" class="qty-chip" data-qty-add-ctn="${ctn}" ${attrs} title="Add one carton">+1 ctn</button>`;
-    }
-    return html;
+  function qtyFieldLabel() {
+    return window.qtyLabel ? qtyLabel() : 'Qty';
   }
 
   function renderCart() {
@@ -209,7 +201,10 @@
     updateUndoButton();
 
     if (!state.cart.length) {
-      list.innerHTML = '<p class="text-slate-500">Cart is empty</p>';
+      list.innerHTML =
+        '<p class="text-slate-500">' +
+        (window.uiText ? uiText('cart_empty') : 'Cart is empty') +
+        '</p>';
     } else {
       list.innerHTML = state.cart
         .map((it, idx) => {
@@ -222,20 +217,18 @@
           <div class="border border-slate-200 rounded-lg p-2 bg-white/80">
             <div class="flex justify-between gap-2">
               <div>
-                <div class="font-medium">${it.name}</div>
+                <div class="font-medium">${formatCatalogName(it)}</div>
                 <div class="text-xs text-slate-500 font-mono">${it.item_code || ''} · ${it.model || '—'}${ctn ? ' · ctn ' + ctn : ''}</div>
                 ${focNote}
               </div>
               <button data-remove="${idx}" class="text-slate-400 hover:text-red-600 text-xs">Remove</button>
             </div>
             <div class="mt-2 flex flex-wrap items-center justify-between gap-2">
-              <div class="flex flex-wrap items-center gap-1">
-                <label class="text-xs">Qty
-                  <input data-qty="${idx}" type="number" min="1" value="${it.qty}"
-                    class="ml-1 w-16 border rounded px-1 py-0.5" />
-                </label>
-                ${qtyChipsHtml(`data-cart-idx="${idx}"`, it.ctn_qty)}
-              </div>
+              <label class="text-sm font-medium flex items-center gap-2">
+                <span dir="auto">${qtyFieldLabel()}</span>
+                <input data-qty="${idx}" type="number" min="1" value="${it.qty}"
+                  class="qty-input w-24 border border-slate-300 rounded-lg px-2 py-1.5 text-base font-semibold" />
+              </label>
               <span>${money(lineTotal(it))} PKR</span>
             </div>
           </div>`;
@@ -263,32 +256,6 @@
         renderCart();
       });
     });
-    list.querySelectorAll('[data-cart-idx][data-qty-delta]').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const idx = Number(btn.getAttribute('data-cart-idx'));
-        const delta = Number(btn.getAttribute('data-qty-delta'));
-        pushCartUndo();
-        state.cart[idx].qty = Math.max(1, state.cart[idx].qty + delta);
-        renderCart();
-      });
-    });
-    list.querySelectorAll('[data-cart-idx][data-qty-set]').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const idx = Number(btn.getAttribute('data-cart-idx'));
-        pushCartUndo();
-        state.cart[idx].qty = Math.max(1, Number(btn.getAttribute('data-qty-set')));
-        renderCart();
-      });
-    });
-    list.querySelectorAll('[data-cart-idx][data-qty-add-ctn]').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const idx = Number(btn.getAttribute('data-cart-idx'));
-        const ctn = Number(btn.getAttribute('data-qty-add-ctn'));
-        pushCartUndo();
-        state.cart[idx].qty = Math.max(1, state.cart[idx].qty + ctn);
-        renderCart();
-      });
-    });
   }
 
   function addToCart(item, qty, opts) {
@@ -305,6 +272,7 @@
         item_code: item.item_code,
         model: item.model,
         name: item.name,
+        urdu_name: item.urdu_name || '',
         cp: item.cp != null ? item.cp : item.unit_price,
         foc_qty: item.foc_qty,
         foc_units: item.foc_units,
@@ -489,15 +457,15 @@
                     ${selected ? 'checked' : ''} class="mt-1" />
                   <div class="flex-1 text-sm">
                     <div class="font-mono text-xs text-slate-500">${m.item_code || ''}${preferred ? ' · <span class="text-teal-700">preferred</span>' : ''}</div>
-                    <div class="font-medium">${m.model || '—'} · ${m.name}</div>
+                    <div class="font-medium">${m.model || '—'} · ${formatCatalogName(m)}</div>
                     <div class="text-xs text-slate-600">CP ${money(m.cp)} PKR · ${focPreview(m)}${ctn ? ' · ctn ' + ctn : ''}</div>
-                    <div class="mt-1 ${selected ? '' : 'hidden'}" data-qty-wrap="${key}">
-                      <div class="flex flex-wrap items-center gap-1">
-                        Qty <input type="number" min="1" value="${selected ? selected.qty : group.qty || 1}"
+                    <div class="mt-2 ${selected ? '' : 'hidden'}" data-qty-wrap="${key}">
+                      <label class="text-sm font-medium flex items-center gap-2">
+                        <span dir="auto">${qtyFieldLabel()}</span>
+                        <input type="number" min="1" value="${selected ? selected.qty : group.qty || 1}"
                           data-qty-for="${realIndex}" data-qty-id="${m.id}"
-                          class="w-16 border rounded px-1 py-0.5" />
-                        ${qtyChipsHtml(`data-disambig-g="${realIndex}" data-disambig-id="${m.id}"`, m.ctn_qty)}
-                      </div>
+                          class="qty-input w-24 border border-slate-300 rounded-lg px-2 py-1.5 text-base font-semibold" />
+                      </label>
                     </div>
                   </div>
                 </div>
@@ -511,7 +479,7 @@
           <div class="flex flex-wrap items-start justify-between gap-2 mb-2">
             <div class="text-sm">
               <span class="font-medium">“${group.spoken || group.item}”</span>
-              <span class="text-slate-500"> · qty ${group.qty || 1}
+              <span class="text-slate-500"> · ${qtyFieldLabel()} ${group.qty || 1}
               ${group.model ? ' · said model ' + group.model : ''}
               · ${group.confidence || 'ambiguous'}
               · ${matches.length}/${(group.matches || []).length} shown</span>
@@ -624,43 +592,6 @@
       });
     });
 
-    // Disambiguation qty chips
-    list.querySelectorAll('[data-disambig-g][data-qty-delta]').forEach((btn) => {
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        bumpDisambigQty(
-          Number(btn.getAttribute('data-disambig-g')),
-          Number(btn.getAttribute('data-disambig-id')),
-          Number(btn.getAttribute('data-qty-delta')),
-          null
-        );
-      });
-    });
-    list.querySelectorAll('[data-disambig-g][data-qty-set]').forEach((btn) => {
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        bumpDisambigQty(
-          Number(btn.getAttribute('data-disambig-g')),
-          Number(btn.getAttribute('data-disambig-id')),
-          null,
-          Number(btn.getAttribute('data-qty-set'))
-        );
-      });
-    });
-    list.querySelectorAll('[data-disambig-g][data-qty-add-ctn]').forEach((btn) => {
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const gi = Number(btn.getAttribute('data-disambig-g'));
-        const id = Number(btn.getAttribute('data-disambig-id'));
-        const ctn = Number(btn.getAttribute('data-qty-add-ctn'));
-        const group = state.pending[gi];
-        group.selected = group.selected || {};
-        const cur = (group.selected[id] && group.selected[id].qty) || group.qty || 1;
-        group.selected[id] = { qty: cur + ctn };
-        renderDisambiguation();
-      });
-    });
-
     // Click card to focus
     list.querySelectorAll('.match-card[data-nav]').forEach((card) => {
       card.addEventListener('click', (e) => {
@@ -673,20 +604,6 @@
 
     updateConfirmEnabled();
     applyFocusStyles();
-  }
-
-  function bumpDisambigQty(gi, id, delta, setTo) {
-    const group = state.pending[gi];
-    group.selected = group.selected || {};
-    if (!group.selected[id]) {
-      group.selected[id] = { qty: group.qty || 1 };
-    }
-    if (setTo != null) {
-      group.selected[id].qty = Math.max(1, setTo);
-    } else {
-      group.selected[id].qty = Math.max(1, group.selected[id].qty + delta);
-    }
-    renderDisambiguation();
   }
 
   function updateConfirmEnabled() {
@@ -849,7 +766,7 @@
         data-teach-pick-idx="${i}" role="option">
         <td class="px-2 py-1.5 font-mono text-xs">${it.item_code || ''}</td>
         <td class="px-2 py-1.5">${it.model || ''}${preferred ? ' <span class="text-xs text-teal-700">· preferred</span>' : ''}</td>
-        <td class="px-2 py-1.5">${it.name || ''}</td>
+        <td class="px-2 py-1.5">${formatCatalogName(it)}</td>
         <td class="px-2 py-1.5 text-right">${money(it.cp)}</td>
       </tr>`;
       })
@@ -1095,7 +1012,8 @@
     } finally {
       if (parseBtn) {
         parseBtn.disabled = false;
-        parseBtn.textContent = prevBtnLabel || 'Parse Text';
+        parseBtn.textContent =
+          prevBtnLabel || (window.uiText ? uiText('parse_text') : 'Parse Text');
       }
     }
   }
@@ -1195,6 +1113,7 @@
           item_code: it.item_code,
           model: it.model,
           name: it.name,
+          urdu_name: it.urdu_name || '',
           cp: it.cp != null ? it.cp : it.unit_price,
           foc_qty: it.foc_qty,
           foc_units: it.foc_units,
@@ -1416,7 +1335,7 @@
         return `
       <div class="flex items-center justify-between gap-2 border rounded-lg px-2 py-1.5 bg-white ${lockedHit ? 'border-teal-300' : ''}">
         <div>
-          <div class="font-medium">${m.name}${lockedHit ? ' <span class="text-xs text-teal-700">(preferred)</span>' : ''}</div>
+          <div class="font-medium">${formatCatalogName(m)}${lockedHit ? ' <span class="text-xs text-teal-700">(preferred)</span>' : ''}</div>
           <div class="text-xs text-slate-500">${m.item_code || ''} · ${m.model || '—'} · ${money(m.cp)} PKR${ctn ? ' · ctn ' + ctn : ''}</div>
         </div>
         <div class="flex gap-1">
@@ -1469,4 +1388,17 @@
   wireTeachModal();
   renderModelLock();
   renderCart();
+
+  window.addEventListener('catalog-display-lang', () => {
+    renderCart();
+    renderDisambiguation();
+    const manualInput = document.getElementById('manual-search');
+    if (manualInput && (manualInput.value || '').trim().length >= 2) {
+      manualSearch();
+    }
+    const teachModal = document.getElementById('teach-modal');
+    if (teachModal && !teachModal.classList.contains('hidden')) {
+      runTeachCatalogSearch();
+    }
+  });
 })();

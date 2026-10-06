@@ -25,8 +25,32 @@
     <button id="reimport" type="button" class="px-4 py-2 rounded-lg bg-accent text-white">Re-import now</button>
     <pre id="import-result" class="text-xs bg-slate-900 text-slate-100 rounded-lg p-3 overflow-auto hidden"></pre>
   </div>
+  <div class="card-soft rounded-xl p-4 space-y-3">
+    <h2 class="font-semibold text-lg">Catalog name display</h2>
+    <p class="text-sm text-slate-600">
+      Search, voice, and matching stay English. This only changes how catalog
+      names are shown so staff who read Urdu can verify. Empty Urdu fields fall
+      back to English. Fill missing <code>urdu_name</code> in Excel later when ready.
+    </p>
+    <div id="settings-catalog-lang" class="catalog-lang-toggle flex flex-wrap gap-2">
+      <button type="button" data-catalog-lang="en" class="model-chip px-3 py-1.5">EN only</button>
+      <button type="button" data-catalog-lang="ur" class="model-chip px-3 py-1.5">اردو only</button>
+      <button type="button" data-catalog-lang="both" class="model-chip px-3 py-1.5">Both (EN + اردو)</button>
+    </div>
+    <p id="settings-lang-hint" class="text-xs text-slate-500"></p>
+  </div>
 </div>
 <script>
+function syncLangHint() {
+  const mode = window.getCatalogDisplayMode ? getCatalogDisplayMode() : 'both';
+  const labels = {
+    en: 'Showing English catalog names only.',
+    ur: 'Showing Urdu names when available (else English).',
+    both: 'Showing English + Urdu under each name.',
+  };
+  const hint = document.getElementById('settings-lang-hint');
+  if (hint) hint.textContent = labels[mode] || labels.both;
+}
 async function loadSettings() {
   const res = await fetch('/api/status');
   const data = await res.json();
@@ -77,5 +101,20 @@ document.getElementById('reimport').addEventListener('click', async () => {
   if (window.refreshModeBanner) refreshModeBanner();
 });
 loadSettings();
+if (window.wireCatalogDisplayToggle) {
+  wireCatalogDisplayToggle('#settings-catalog-lang');
+}
+syncLangHint();
+window.addEventListener('catalog-display-lang', () => {
+  syncLangHint();
+  document.querySelectorAll('.catalog-lang-toggle').forEach((box) => {
+    const mode = getCatalogDisplayMode();
+    box.querySelectorAll('[data-catalog-lang]').forEach((b) => {
+      const on = b.getAttribute('data-catalog-lang') === mode;
+      b.classList.toggle('active', on);
+      b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+  });
+});
 </script>
 {% endblock %}

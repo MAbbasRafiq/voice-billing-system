@@ -39,6 +39,10 @@
     .foc-row { background: #dcfce7; color: #166534; }
     .match-card.selected { outline: 2px solid #0f766e; background: #f0fdfa; }
     .match-card.focused { box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.35); }
+    .qty-input {
+      min-width: 5.5rem;
+      height: 2.35rem;
+    }
     .qty-chip {
       font-size: 0.7rem;
       padding: 0.15rem 0.4rem;
@@ -57,11 +61,30 @@
       cursor: pointer;
     }
     .model-chip.active { background: #0f766e; color: #fff; border-color: #0f766e; }
+    .catalog-lang-toggle .model-chip { min-width: 2.5rem; text-align: center; }
+    .catalog-name-ur,
+    .catalog-name-ur-style {
+      display: block;
+      margin-top: 0.2rem;
+      font-size: 1.05rem;
+      font-weight: 700;
+      line-height: 1.35;
+      color: #0f172a;
+    }
+    .catalog-name-en-fallback {
+      font-weight: 500;
+      font-size: inherit;
+    }
+    .catalog-name-ur:only-child {
+      display: inline;
+      margin-top: 0;
+    }
     #mode-banner.fuzzy { background: #fff7ed; color: #9a3412; border-color: #fdba74; }
     #mode-banner.groq { background: #ecfdf5; color: #065f46; border-color: #6ee7b7; }
     #mode-banner.local { background: #ecfdf5; color: #065f46; border-color: #6ee7b7; }
     #mode-banner.gemini { background: #eff6ff; color: #1e40af; border-color: #93c5fd; }
   </style>
+  <script src="/static/js/catalog_display.js"></script>
 </head>
 <body class="font-body text-ink">
   <header class="border-b border-slate-200/80 bg-white/70 backdrop-blur sticky top-0 z-40">
@@ -69,7 +92,14 @@
       <a href="/" class="font-display text-xl font-semibold tracking-tight">
         Spare Parts <span class="text-accent">Billing</span>
       </a>
-      <nav class="flex flex-wrap gap-1 text-sm">
+      <nav class="flex flex-wrap items-center gap-2 text-sm">
+        <div id="catalog-lang-toggle" class="catalog-lang-toggle flex items-center gap-1 mr-1"
+          title="Catalog name display (verify only; search stays English)">
+          <span class="text-xs text-slate-500 hidden sm:inline">Names</span>
+          <button type="button" data-catalog-lang="en" class="model-chip">EN</button>
+          <button type="button" data-catalog-lang="ur" class="model-chip">اردو</button>
+          <button type="button" data-catalog-lang="both" class="model-chip">Both</button>
+        </div>
         <a class="px-3 py-1.5 rounded-md hover:bg-slate-100 {% if active|default('') == 'billing' %}bg-slate-900 text-white hover:bg-slate-900{% endif %}" href="/">Billing</a>
         <a class="px-3 py-1.5 rounded-md hover:bg-slate-100 {% if active|default('') == 'catalog' %}bg-slate-900 text-white hover:bg-slate-900{% endif %}" href="/catalog">Catalog</a>
         <a class="px-3 py-1.5 rounded-md hover:bg-slate-100 {% if active|default('') == 'history' %}bg-slate-900 text-white hover:bg-slate-900{% endif %}" href="/history">History</a>
@@ -109,6 +139,19 @@
       }
     }
     refreshModeBanner();
+    if (window.wireCatalogDisplayToggle) {
+      wireCatalogDisplayToggle('#catalog-lang-toggle');
+    }
+    window.addEventListener('catalog-display-lang', () => {
+      const mode = getCatalogDisplayMode();
+      document.querySelectorAll('.catalog-lang-toggle').forEach((box) => {
+        box.querySelectorAll('[data-catalog-lang]').forEach((b) => {
+          const on = b.getAttribute('data-catalog-lang') === mode;
+          b.classList.toggle('active', on);
+          b.setAttribute('aria-pressed', on ? 'true' : 'false');
+        });
+      });
+    });
   </script>
   {% block scripts %}{% endblock %}
 </body>

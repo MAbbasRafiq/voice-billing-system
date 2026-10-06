@@ -5,10 +5,10 @@
 <div class="grid lg:grid-cols-5 gap-5">
   <section class="lg:col-span-3 space-y-4">
     <div class="card-soft rounded-xl p-4">
-      <h1 class="font-display text-2xl font-semibold mb-1">Speak the order</h1>
+      <h1 class="font-display text-2xl font-semibold mb-1" data-i18n="speak_order">Speak the order</h1>
 
       <div class="flex flex-wrap items-center gap-3 mb-3">
-        <button id="mic-btn" type="button"
+        <button id="mic-btn" type="button" data-i18n="start_listening"
           class="select-none px-5 py-3 rounded-lg bg-accent text-white font-medium shadow hover:brightness-110 active:scale-[0.98]">
           Start Listening
         </button>
@@ -19,11 +19,11 @@
             <option value="whisper" selected>Local Parakeet</option>
           </select>
         </label>
-        <button id="parse-btn" type="button"
+        <button id="parse-btn" type="button" data-i18n="parse_text"
           class="px-4 py-3 rounded-lg border border-slate-300 bg-white hover:bg-slate-50">
           Parse Text
         </button>
-        <button id="new-bill-btn" type="button"
+        <button id="new-bill-btn" type="button" data-i18n="new_bill"
           class="px-4 py-3 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-700"
           title="Clear transcript, cart, and pending items">
           New bill
@@ -51,8 +51,8 @@
 
     <div id="disambiguation" class="card-soft rounded-xl p-4 hidden">
       <div class="flex flex-wrap items-center justify-between gap-2 mb-2">
-        <h2 class="font-semibold text-lg">Resolve ambiguous items</h2>
-        <button id="confirm-resolved" type="button"
+        <h2 class="font-semibold text-lg" data-i18n="resolve_ambiguous">Resolve ambiguous items</h2>
+        <button id="confirm-resolved" type="button" data-i18n="confirm_selected"
           class="px-4 py-2 rounded-lg bg-slate-900 text-white text-sm disabled:opacity-40" disabled>
           Confirm selected
         </button>
@@ -64,11 +64,11 @@
     </div>
 
     <div class="card-soft rounded-xl p-4">
-      <h2 class="font-semibold text-lg mb-2">Add from catalog</h2>
+      <h2 class="font-semibold text-lg mb-2" data-i18n="add_from_catalog">Add from catalog</h2>
       <div class="flex gap-2 mb-2">
         <input id="manual-search" type="search" placeholder="Search name, code, model…"
           class="flex-1 rounded-lg border border-slate-300 px-3 py-2" />
-        <button id="manual-search-btn" type="button" class="px-3 py-2 rounded-lg border bg-white">Search</button>
+        <button id="manual-search-btn" type="button" data-i18n="search" class="px-3 py-2 rounded-lg border bg-white">Search</button>
       </div>
       <div id="manual-results" class="max-h-56 overflow-auto space-y-2 text-sm"></div>
     </div>
@@ -77,19 +77,19 @@
   <section class="lg:col-span-2 space-y-4">
     <div class="card-soft rounded-xl p-4">
       <div class="flex flex-wrap items-center justify-between mb-3 gap-2">
-        <h2 class="font-semibold text-lg">Cart</h2>
+        <h2 class="font-semibold text-lg" data-i18n="cart">Cart</h2>
         <div class="flex flex-wrap items-center gap-2">
-          <button id="undo-cart-btn" type="button"
+          <button id="undo-cart-btn" type="button" data-i18n="undo"
             class="text-sm text-slate-500 hover:text-slate-800 disabled:opacity-40" disabled
             title="Undo last cart change">
             Undo
           </button>
-          <button id="repeat-last-btn" type="button"
+          <button id="repeat-last-btn" type="button" data-i18n="repeat_last"
             class="text-sm text-slate-500 hover:text-teal-800"
             title="Load the previous bill into the cart">
             Repeat last
           </button>
-          <button id="clear-cart" type="button" class="text-sm text-slate-500 hover:text-red-600">Clear</button>
+          <button id="clear-cart" type="button" data-i18n="clear" class="text-sm text-slate-500 hover:text-red-600">Clear</button>
         </div>
       </div>
       <label class="block text-sm mb-1" for="customer">Customer (optional)</label>
@@ -102,7 +102,7 @@
         <span>Total (PKR)</span>
         <span id="cart-total">0.00</span>
       </div>
-      <button id="preview-bill-btn" type="button"
+      <button id="preview-bill-btn" type="button" data-i18n="preview_bill"
         class="mt-4 w-full py-3 rounded-lg bg-accent2 text-white font-medium disabled:opacity-40" disabled>
         Preview Bill
       </button>

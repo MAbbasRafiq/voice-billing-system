@@ -140,6 +140,7 @@ def _build_bill_lines(payload_lines: list[BillLineIn]) -> tuple[list[dict], floa
                 "item_code": item.get("item_code"),
                 "model": item.get("model"),
                 "name": item.get("name"),
+                "urdu_name": item.get("urdu_name"),
                 "qty": fl["qty"],
                 "unit_price": fl["unit_price"],
                 "line_total": fl["line_total"],

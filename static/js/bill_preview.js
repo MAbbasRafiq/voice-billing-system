@@ -30,7 +30,7 @@
         return `<tr class="${cls}">
           <td class="px-2 py-1 font-mono text-xs">${l.item_code || ''}</td>
           <td class="px-2 py-1">${l.model || ''}</td>
-          <td class="px-2 py-1">${l.name || ''}${l.is_foc ? ' <em>FOC (Free)</em>' : ''}</td>
+          <td class="px-2 py-1">${window.formatCatalogName ? formatCatalogName(l) : (l.name || '')}${l.is_foc ? ' <em>FOC (Free)</em>' : ''}</td>
           <td class="px-2 py-1 text-right">${l.qty}</td>
           <td class="px-2 py-1 text-right">${money(l.unit_price)}</td>
           <td class="px-2 py-1 text-right">${money(l.line_total)}</td>
@@ -46,7 +46,7 @@
             <th class="text-left px-2 py-1">Code</th>
             <th class="text-left px-2 py-1">Model</th>
             <th class="text-left px-2 py-1">Name</th>
-            <th class="text-right px-2 py-1">Qty</th>
+            <th class="text-right px-2 py-1">${window.qtyLabel ? qtyLabel() : 'Qty'}</th>
             <th class="text-right px-2 py-1">Unit</th>
             <th class="text-right px-2 py-1">Total</th>
           </tr>
@@ -61,6 +61,10 @@
       </table>`;
     previewPanel.classList.remove('hidden');
   }
+
+  window.addEventListener('catalog-display-lang', () => {
+    if (lastPreview) renderPreview(lastPreview);
+  });
 
   if (previewBtn) {
     previewBtn.addEventListener('click', async () => {

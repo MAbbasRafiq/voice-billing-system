@@ -42,11 +42,14 @@ let catTotal = 0;
 let catLoading = false;
 
 function rowHtml(it) {
+  const nameHtml = window.formatCatalogName
+    ? formatCatalogName(it)
+    : (it.name || '');
   return `
     <tr class="border-b border-slate-100 hover:bg-white/70">
       <td class="px-2 py-1.5 font-mono text-xs">${it.item_code || ''}</td>
       <td class="px-2 py-1.5">${it.model || ''}</td>
-      <td class="px-2 py-1.5">${it.name || ''}</td>
+      <td class="px-2 py-1.5">${nameHtml}</td>
       <td class="px-2 py-1.5 text-slate-500">${it.category || ''}</td>
       <td class="px-2 py-1.5 text-right">${Number(it.cp).toFixed(2)}</td>
       <td class="px-2 py-1.5 text-right">${it.foc_qty ? (it.foc_qty + '→' + (it.foc_units||0)) : '—'}</td>
@@ -131,6 +134,7 @@ document.getElementById('cat-q').addEventListener('keydown', e => {
   if (e.key === 'Enter') { clearTimeout(catTimer); loadCatalog(); }
 });
 document.getElementById('cat-category').addEventListener('change', () => loadCatalog());
+window.addEventListener('catalog-display-lang', () => loadCatalog());
 loadCatalog();
 </script>
 {% endblock %}

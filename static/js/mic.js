@@ -58,7 +58,7 @@
   }
 
   function setButtonIdle() {
-    micBtn.textContent = 'Start Listening';
+    micBtn.textContent = window.uiText ? uiText('start_listening') : 'Start Listening';
     micBtn.classList.remove('ring-4', 'ring-red-300', 'bg-red-600');
     micBtn.classList.add('bg-accent');
     micBtn.disabled = !engineSupported();
@@ -75,7 +75,7 @@
 
   function setButtonListening() {
     micBtn.disabled = false;
-    micBtn.textContent = 'Stop Listening';
+    micBtn.textContent = window.uiText ? uiText('stop_listening') : 'Stop Listening';
     micBtn.classList.remove('bg-accent');
     micBtn.classList.add('ring-4', 'ring-red-300', 'bg-red-600');
     setMicState('');
@@ -406,4 +406,8 @@
   }
 
   setButtonIdle();
+  window.addEventListener('catalog-display-lang', () => {
+    if (micBtn.classList.contains('bg-red-600')) setButtonListening();
+    else setButtonIdle();
+  });
 })();
