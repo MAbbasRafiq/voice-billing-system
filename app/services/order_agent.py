@@ -91,6 +91,27 @@ def _lookup_alias_name(*candidates: str) -> Optional[str]:
     return None
 
 
+def _rewrite_text_via_speech_alias(text: str) -> tuple[str, bool]:
+    """If a taught spoken→phrase alias exists, rewrite transcript to that phrase.
+
+    Preserves a leading quantity so ``2 meetai mukamal`` → ``2 meter complete``.
+    Returns (text, used_alias).
+    """
+    raw = (text or "").strip()
+    if not raw:
+        return raw, False
+    qty, rest = strip_leading_qty(raw)
+    alias = _lookup_alias_name(rest or raw, raw)
+    if not alias:
+        return raw, False
+    alias = alias.strip()
+    if not alias:
+        return raw, False
+    if qty and qty > 1:
+        return f"{qty} {alias}", True
+    return alias, True
+
+
 def _prefer_models(matches: list[dict], preferred: Optional[list[str]]) -> list[dict]:
     if not preferred or not matches:
         return matches
@@ -315,7 +336,13 @@ def resolve_order(
             "message": "That looks like a bike model. Please also enter the part name.",
         }
 
-    if not _looks_like_order(text) or not transcript_matches_catalog(text):
+    # Taught speech aliases must beat the catalog-noise gate: STT gibberish like
+    # "Meetai Mukamal" is not catalog-shaped, but maps to a real part phrase.
+    text, via_early_alias = _rewrite_text_via_speech_alias(text)
+
+    if not via_early_alias and (
+        not _looks_like_order(text) or not transcript_matches_catalog(text)
+    ):
         return {
             "mode": "local",
             "items": [],
